@@ -31,6 +31,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -141,24 +142,14 @@ var attrModifiers = map[string][]string{
 
 // --------------- Action patterns ---------------
 
-// validActions maps action names to their HTTP methods.
-var validActions = map[string]string{
-	"get":    "GET",
-	"post":   "POST",
-	"put":    "PUT",
-	"patch":  "PATCH",
-	"delete": "DELETE",
-}
-
 // --------------- Prohibited patterns ---------------
 
-var (
-	// Alpine.js / Vue.js attributes that should NOT appear in Datastar projects.
-	foreignAttrs = []string{
-		"x-", ":", "@", "v-",
-	}
-	// data-ignore is fine for third-party libs, but without it these are errors.
-)
+// Alpine.js / Vue.js attributes that should NOT appear in Datastar projects.
+var foreignAttrs = []string{
+	"x-", ":", "@", "v-",
+}
+
+// data-ignore is fine for third-party libs, but without it these are errors.
 
 // --------------- Lint result ---------------
 
@@ -182,6 +173,12 @@ func (s severity) String() string {
 	return "?"
 }
 
+// MarshalJSON emits the severity as its string form (ERROR/WARN/HINT) so JSON
+// output is self-describing and stable across internal int values.
+func (s severity) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
 type lintResult struct {
 	Severity   severity `json:"severity"`
 	File       string   `json:"file"`
@@ -201,6 +198,7 @@ type config struct {
 	recursive bool
 	exts      map[string]bool
 	strict    bool
+	format    string
 }
 
 func main() {
@@ -212,6 +210,7 @@ func main() {
 	flag.StringVar(&extList, "ext", "html,htm,templ", "Comma-separated file extensions")
 	flag.BoolVar(&cfg.strict, "s", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.BoolVar(&cfg.strict, "strict", false, "Enable strict checks (Pro attr unknowns, etc.)")
+	flag.StringVar(&cfg.format, "format", "text", "Output format: text or json")
 	flag.Parse()
 
 	cfg.exts = make(map[string]bool)
@@ -246,6 +245,19 @@ func main() {
 		return a.Code < b.Code
 	})
 
+	if cfg.format == "json" {
+		out, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(out))
+		if errCount := countErrors(results); errCount > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(results) == 0 {
 		fmt.Println("✓ No Datastar issues found.")
 		return
@@ -269,13 +281,7 @@ func main() {
 		fmt.Println()
 	}
 
-	// Count errors vs warnings.
-	errCount := 0
-	for _, r := range results {
-		if r.Severity == sevError {
-			errCount++
-		}
-	}
+	errCount := countErrors(results)
 	if errCount > 0 {
 		fmt.Printf("❌ %d error(s) found.\n", errCount)
 		os.Exit(1)
@@ -302,6 +308,17 @@ func run(cfg config) []lintResult {
 		all = append(all, results...)
 	}
 	return all
+}
+
+// countErrors returns the number of error-severity findings.
+func countErrors(results []lintResult) int {
+	n := 0
+	for _, r := range results {
+		if r.Severity == sevError {
+			n++
+		}
+	}
+	return n
 }
 
 func collectFiles(root string, recursive bool, exts map[string]bool) []string {
@@ -340,7 +357,14 @@ func lintFile(path string, cfg config) []lintResult {
 			Message:  fmt.Sprintf("cannot open: %v", err),
 		}}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
+
+	srcBytes, rerr := os.ReadFile(path)
+	if rerr != nil {
+		srcBytes = nil
+	}
+	curSrc = newSource(srcBytes)
+	defer func() { curSrc = nil }()
 
 	doc, err := html.Parse(f)
 	if err != nil {
@@ -620,7 +644,7 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 	// Attribute-specific value validation.
 	switch baseAttr {
 	case "data-signals":
-		if !isObjectSyntax && val != "" {
+		if val != "" {
 			checkJSONSignals(val, n, a, path, tag, results)
 			checkUnescapedSingleQuotes(val, name, n, a, path, tag, results)
 		}
@@ -1184,10 +1208,11 @@ func hasModifier(modifiers []string, name string) bool {
 // --------------- Cross-attribute checks ---------------
 
 // checkUnescapedSingleQuotes detects single quotes inside data-signals values
-// that are used inside single-quoted HTML attributes. This is a known pitfall:
-// templ renders data-signals='{...}' by default, and a bare ' in the value
-// breaks the attribute boundary.
-// See: cali-coding-go-stack/references/templ/rules.md → SafeJSON pattern.
+// that break the HTML attribute boundary. When the attribute is double-quoted
+// (data-signals="...'...") the HTML parser preserves the inner ', which then
+// breaks the Datastar JSON parse client-side. Single-quoted attributes are
+// mangled by the parser (the ' truncates the value), so they are caught as a
+// parse/truncation issue rather than here.
 func checkUnescapedSingleQuotes(val, attrName string, n *html.Node, a html.Attribute, path, tag string, results *[]lintResult) {
 	if strings.Contains(val, "'") && !strings.Contains(val, "&#39;") {
 		line, col := getAttrPosition(n, a)
@@ -1322,7 +1347,7 @@ func checkScriptDeferMissing(n *html.Node, path, tag string, results *[]lintResu
 // data-init on the same element (since indicator signal must exist before
 // init runs).
 func checkIndicatorBeforeInit(n *html.Node, path, tag string, results *[]lintResult) {
-	var indicatorIdx, initIdx int = -1, -1
+	indicatorIdx, initIdx := -1, -1
 	for i, a := range n.Attr {
 		lower := strings.ToLower(a.Key)
 		if lower == "data-indicator" || strings.HasPrefix(lower, "data-indicator:") ||
@@ -1611,11 +1636,102 @@ func suggestAttr(name string) (string, bool) {
 
 // --------------- Line/col position ---------------
 
-// getAttrPosition estimates the line and column of an attribute in the
-// original HTML. Currently returns 0,0 because html.Node doesn't expose
-// position. A more precise implementation would diff against the
-// original source or use a streaming parser that tracks positions.
-// Returns 0,0 which still allows output tools to navigate via file path.
+// curSrc holds the source of the file currently being walked. The HTML parser
+// (golang.org/x/net/html) discards byte offsets, so we recover positions by
+// scanning the original bytes. The walk is single-threaded, so a single
+// package-level current source is sufficient (KISS, no threading overhead).
+var curSrc *source
+
+// source is the raw bytes of a linted file plus a line-start index for O(1)
+// byte-offset -> (line, col) conversion. A cursor tracks how far we've scanned
+// so repeated attributes resolve to successive occurrences, not always the first.
+type source struct {
+	bytes  []byte
+	lines  []int // lines[i] = byte offset of the start of line i+1
+	cursor int
+}
+
+// newSource builds a source from raw file bytes. A nil/empty slice yields a
+// source that reports 0,0 (graceful degradation when the file is unreadable).
+func newSource(b []byte) *source {
+	if len(b) == 0 {
+		return &source{}
+	}
+	s := &source{bytes: b, lines: []int{0}}
+	for i, c := range b {
+		if c == '\n' {
+			s.lines = append(s.lines, i+1)
+		}
+	}
+	return s
+}
+
+// locate finds the next occurrence of `attr` within an element whose opening
+// tag is `tag`, returning its 1-based line and column. It searches for the next
+// `<tag` after the cursor, then for `attr` before the tag's closing `>`. If the
+// attribute can't be located (e.g. templ expression mangling), it falls back to
+// the element's opening line. This is robust for well-formed HTML, which is
+// what we lint.
+func (s *source) locate(tag, attr string) (line, col int) {
+	if s == nil || len(s.bytes) == 0 {
+		return 0, 0
+	}
+	tagLower := strings.ToLower(tag)
+	attrLower := strings.ToLower(attr)
+	b := s.bytes
+
+	open := bytes.Index(b[s.cursor:], []byte("<"+tagLower))
+	if open < 0 {
+		if os.Getenv("DSLINT_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "[locate] tag=%s attr=%s cursor=%d open=-1\n", tagLower, attrLower, s.cursor)
+		}
+		return 0, 0
+	}
+	open += s.cursor
+	// Find the end of this opening tag.
+	close := bytes.IndexByte(b[open:], '>')
+	if close < 0 {
+		close = len(b) - open // unclosed; scan to EOF
+	} else {
+		close += open
+	}
+	tagRegion := b[open : close+1]
+
+	// Search for the attribute token (name followed by '=' or whitespace).
+	needle := []byte(attrLower)
+	aOff := bytes.Index(tagRegion, needle)
+	if aOff < 0 {
+		// Attribute not in this tag's opening; fall back to element line.
+		s.cursor = open
+		return s.offsetToLineCol(open)
+	}
+	abs := open + aOff
+	// Anchor the cursor at this element's opening tag (not past the attribute)
+	// so repeated attributes on the same element re-locate the same <tag> and
+	// each find their own occurrence, while the next element advances naturally.
+	s.cursor = open
+	return s.offsetToLineCol(abs)
+}
+
+// offsetToLineCol converts a byte offset to 1-based (line, col).
+func (s *source) offsetToLineCol(off int) (line, col int) {
+	line = 1
+	for i, start := range s.lines {
+		if start <= off {
+			line = i + 1
+		} else {
+			break
+		}
+	}
+	col = off - s.lines[line-1] + 1
+	return line, col
+}
+
+// getAttrPosition returns the 1-based line and column of attribute a on node n,
+// recovered from the original source bytes. Falls back to 0,0 if unavailable.
 func getAttrPosition(n *html.Node, a html.Attribute) (line, col int) {
-	return 0, 0
+	if curSrc == nil {
+		return 0, 0
+	}
+	return curSrc.locate(n.Data, a.Key)
 }

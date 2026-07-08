@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <div data-show="$open" data-on:click="@post('/x')"></div>
+    <dialog class="modal" data-class='{"modal-open": $open}'>m</dialog>
+    <form data-on:submit="@post('/save')">
+      <input data-bind="name" name="name" />
+      <button type="submit">save</button>
+    </form>
+  </body>
+</html>
