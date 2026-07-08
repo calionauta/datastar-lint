@@ -125,6 +125,25 @@ func TestSignalsUnescapedQuotes(t *testing.T) {
 	if r := hasCode(t, results, "SIGNALS_UNESCAPED_QUOTES"); r == nil {
 		t.Errorf("expected SIGNALS_UNESCAPED_QUOTES for unescaped single quote; got %v", codes(results))
 	}
+
+	// Single-quoted data-signals with an inner single quote: the HTML parser
+	// mangles this, so the check must scan the raw source bytes.
+	results = lintString(t, config{}, `<div data-signals='{"name": "o'brien"}'></div>`, "html")
+	if r := hasCode(t, results, "SIGNALS_UNESCAPED_QUOTES"); r == nil {
+		t.Errorf("expected SIGNALS_UNESCAPED_QUOTES for single-quoted inner quote; got %v", codes(results))
+	}
+
+	// &#39; escape is safe — must NOT fire.
+	results = lintString(t, config{}, `<div data-signals='{"name": "o&#39;brien"}'></div>`, "html")
+	if r := hasCode(t, results, "SIGNALS_UNESCAPED_QUOTES"); r != nil {
+		t.Errorf("&#39; escape should not flag SIGNALS_UNESCAPED_QUOTES, got %v", codes(results))
+	}
+
+	// Clean single-quoted value with no inner quote — must NOT fire.
+	results = lintString(t, config{}, `<div data-signals='{"name": "ok"}'></div>`, "html")
+	if r := hasCode(t, results, "SIGNALS_UNESCAPED_QUOTES"); r != nil {
+		t.Errorf("clean single-quoted value should not flag, got %v", codes(results))
+	}
 }
 
 func TestPositionRecovery(t *testing.T) {

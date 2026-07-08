@@ -1214,20 +1214,38 @@ func hasModifier(modifiers []string, name string) bool {
 // mangled by the parser (the ' truncates the value), so they are caught as a
 // parse/truncation issue rather than here.
 func checkUnescapedSingleQuotes(val, attrName string, n *html.Node, a html.Attribute, path, tag string, results *[]lintResult) {
-	if strings.Contains(val, "'") && !strings.Contains(val, "&#39;") {
-		line, col := getAttrPosition(n, a)
-		*results = append(*results, lintResult{
-			Severity:   sevWarning,
-			File:       path,
-			Line:       line,
-			Col:        col,
-			Element:    tag,
-			Attribute:  attrName,
-			Code:       "SIGNALS_UNESCAPED_QUOTES",
-			Message:    "data-signals contains unescaped single quotes — breaks HTML attribute boundary when rendered with templ",
-			Suggestion: "Use SafeJSON helper or escape ' as &#39; See cali-coding-go-stack references",
-		})
+	// For single-quoted attributes the HTML parser mangles any literal ' inside
+	// the value, so we must scan the raw source (which also correctly treats
+	// the &#39; escape as safe). For other quote styles the parsed value is
+	// trustworthy and the parser already decoded &#39; into ', so we check val
+	// directly (a decoded ' in a double-quoted value is a real break).
+	if curSrc != nil {
+		if broken, single, ok := curSrc.rawAttrBrokenQuote(tag, attrName); ok && single {
+			if broken {
+				reportUnescapedQuotes(n, a, attrName, path, tag, results)
+			}
+			return
+		}
 	}
+	if strings.Contains(val, "'") && !strings.Contains(val, "&#39;") {
+		reportUnescapedQuotes(n, a, attrName, path, tag, results)
+	}
+}
+
+// reportUnescapedQuotes appends a SIGNALS_UNESCAPED_QUOTES finding.
+func reportUnescapedQuotes(n *html.Node, a html.Attribute, attrName, path, tag string, results *[]lintResult) {
+	line, col := getAttrPosition(n, a)
+	*results = append(*results, lintResult{
+		Severity:   sevWarning,
+		File:       path,
+		Line:       line,
+		Col:        col,
+		Element:    tag,
+		Attribute:  attrName,
+		Code:       "SIGNALS_UNESCAPED_QUOTES",
+		Message:    "data-signals contains unescaped single quotes — breaks HTML attribute boundary when rendered with templ",
+		Suggestion: "Use SafeJSON helper or escape ' as &#39; See cali-coding-go-stack references",
+	})
 }
 
 // checkFormSubmitMissing detects <form> elements with data-bind inputs
@@ -1711,6 +1729,66 @@ func (s *source) locate(tag, attr string) (line, col int) {
 	// each find their own occurrence, while the next element advances naturally.
 	s.cursor = open
 	return s.offsetToLineCol(abs)
+}
+
+// rawAttrBrokenQuote reports whether attribute `attr` on element `tag` has an
+// unescaped single quote inside its single-quoted value, detected from the
+// RAW source bytes. The HTML parser mangles single-quoted attributes whose
+// value contains a literal ' (the ' truncates the value), so the parsed value
+// never contains the offending quote. By scanning the raw text we detect the
+// break exactly: a well-formed single-quoted value has exactly two ' (open +
+// close); any extra ' means the attribute boundary was broken. The &#39; HTML
+// escape is treated as safe (not a break). Returns isSingleQuoted so callers
+// can decide whether to use this raw check or the parsed-value fast path.
+// Returns ok=false if the attribute or its quoted value cannot be located.
+func (s *source) rawAttrBrokenQuote(tag, attr string) (broken, isSingleQuoted, ok bool) {
+	if s == nil || len(s.bytes) == 0 {
+		return false, false, false
+	}
+	tagLower := strings.ToLower(tag)
+	attrLower := strings.ToLower(attr)
+	b := s.bytes
+
+	open := bytes.Index(b[s.cursor:], []byte("<"+tagLower))
+	if open < 0 {
+		return false, false, false
+	}
+	open += s.cursor
+	close := bytes.IndexByte(b[open:], '>')
+	if close < 0 {
+		close = len(b) - open
+	} else {
+		close += open
+	}
+	tagRegion := b[open : close+1]
+
+	aOff := bytes.Index(tagRegion, []byte(attrLower))
+	if aOff < 0 {
+		return false, false, false
+	}
+	// Skip the attribute name and any '=' / whitespace.
+	i := aOff + len(attrLower)
+	for i < len(tagRegion) && (tagRegion[i] == '=' || tagRegion[i] == ' ' || tagRegion[i] == '\t') {
+		i++
+	}
+	if i >= len(tagRegion) || tagRegion[i] != '\'' {
+		// Not a single-quoted attribute (or no value) — nothing to check here.
+		return false, false, false
+	}
+	// Count single quotes from the attribute name to the end of the tag's
+	// opening. A well-formed single-quoted attribute has exactly two (open +
+	// close). Any extra ' means the attribute boundary was broken.
+	span := tagRegion[aOff:]
+	count := bytes.Count(span, []byte("'"))
+	if count < 2 {
+		// No single-quoted value (or unterminated) — nothing to flag here.
+		return false, true, false
+	}
+	if bytes.Contains(span, []byte("&#39;")) {
+		// An HTML-escaped quote does not break the boundary; treat as one less.
+		count--
+	}
+	return count > 2, true, true
 }
 
 // offsetToLineCol converts a byte offset to 1-based (line, col).
