@@ -7,23 +7,27 @@
 //
 //   - .html, .htm   Plain HTML (any language)
 //   - .templ        Templ components (Go). Linted by stripping the Templ
-//                    package/import declarations and treating the result as
-//                    HTML; attribute-level checks apply unchanged.
+//     package/import declarations and treating the result as
+//     HTML; attribute-level checks apply unchanged.
 //
 // Usage:
-//   datastar-lint [flags] <file-or-dir>
+//
+//	datastar-lint [flags] <file-or-dir>
 //
 // Flags:
-//   -r, --recursive    Walk directories recursively
-//   -e, --ext string   File extensions to check (default: "html,htm,templ")
-//   -s, --strict       Enable strict checks (Pro attributes unknown, etc.)
+//
+//	-r, --recursive    Walk directories recursively
+//	-e, --ext string   File extensions to check (default: "html,htm,templ")
+//	-s, --strict       Enable strict checks (Pro attributes unknown, etc.)
 //
 // Install:
-//   go install github.com/calionauta/datastar-lint@latest
+//
+//	go install github.com/calionauta/datastar-lint@latest
 //
 // Integration:
-//   Run after `templ generate` as a post-generation validation step:
-//     templ generate && datastar-lint -r ./web/
+//
+//	Run after `templ generate` as a post-generation validation step:
+//	  templ generate && datastar-lint -r ./web/
 package main
 
 import (
@@ -44,52 +48,52 @@ import (
 // Each entry defines whether sub-keys (:) are allowed and whether the
 // attribute is Pro-only (requires commercial license).
 type attrInfo struct {
-	Pro      bool   // requires commercial license
-	Desc     string // human-readable description
-	AllowsKey bool  // accepts data-{name}:{key} syntax
+	Pro       bool   // requires commercial license
+	Desc      string // human-readable description
+	AllowsKey bool   // accepts data-{name}:{key} syntax
 }
 
 var knownAttrs = map[string]attrInfo{
 	// --- Free attributes ---
-	"data-attr":             {AllowsKey: true, Desc: "sets any HTML attribute from expression"},
-	"data-bind":             {AllowsKey: true, Desc: "two-way data binding on input/select/textarea"},
+	"data-attr": {AllowsKey: true, Desc: "sets any HTML attribute from expression"},
+	"data-bind": {AllowsKey: true, Desc: "two-way data binding on input/select/textarea"},
 	// Common third-party data-* attrs (DaisyUI, icons, iframe embeds) — not Datastar:
-	"data-theme":            {AllowsKey: false, Desc: "DaisyUI theme selector"},
-	"data-tip":              {AllowsKey: false, Desc: "DaisyUI tooltip content"},
-	"data-disabled":         {AllowsKey: false, Desc: "(use data-attr:disabled instead)"},
-	"data-tally-src":        {AllowsKey: false, Desc: "Tally.so iframe embed source"},
-	"data-model-id":         {AllowsKey: false, Desc: "Custom app attribute (not Datastar)"},
-	"data-class":            {AllowsKey: true, Desc: "toggles CSS class based on expression"},
-	"data-computed":         {AllowsKey: true, Desc: "creates computed (derived) signal"},
-	"data-effect":           {Desc: "executes expression on signal change"},
-	"data-ignore":           {Desc: "skips Datastar processing for element"},
-	"data-ignore-morph":     {Desc: "prevents element from being morphed"},
-	"data-indicator":        {AllowsKey: true, Desc: "creates loading signal for fetch requests"},
-	"data-init":             {Desc: "executes expression once on initialization"},
-	"data-json-signals":     {AllowsKey: false, Desc: "displays signals as formatted JSON"},
-	"data-on":               {AllowsKey: true, Desc: "event listener (click, submit, keydown, etc.)"},
-	"data-on-intersect":     {AllowsKey: false, Desc: "triggers on viewport intersection"},
-	"data-on-interval":      {AllowsKey: false, Desc: "triggers at regular interval"},
-	"data-on-signal-patch":  {AllowsKey: false, Desc: "triggers when signals are patched"},
+	"data-theme":                  {AllowsKey: false, Desc: "DaisyUI theme selector"},
+	"data-tip":                    {AllowsKey: false, Desc: "DaisyUI tooltip content"},
+	"data-disabled":               {AllowsKey: false, Desc: "(use data-attr:disabled instead)"},
+	"data-tally-src":              {AllowsKey: false, Desc: "Tally.so iframe embed source"},
+	"data-model-id":               {AllowsKey: false, Desc: "Custom app attribute (not Datastar)"},
+	"data-class":                  {AllowsKey: true, Desc: "toggles CSS class based on expression"},
+	"data-computed":               {AllowsKey: true, Desc: "creates computed (derived) signal"},
+	"data-effect":                 {Desc: "executes expression on signal change"},
+	"data-ignore":                 {Desc: "skips Datastar processing for element"},
+	"data-ignore-morph":           {Desc: "prevents element from being morphed"},
+	"data-indicator":              {AllowsKey: true, Desc: "creates loading signal for fetch requests"},
+	"data-init":                   {Desc: "executes expression once on initialization"},
+	"data-json-signals":           {AllowsKey: false, Desc: "displays signals as formatted JSON"},
+	"data-on":                     {AllowsKey: true, Desc: "event listener (click, submit, keydown, etc.)"},
+	"data-on-intersect":           {AllowsKey: false, Desc: "triggers on viewport intersection"},
+	"data-on-interval":            {AllowsKey: false, Desc: "triggers at regular interval"},
+	"data-on-signal-patch":        {AllowsKey: false, Desc: "triggers when signals are patched"},
 	"data-on-signal-patch-filter": {AllowsKey: false, Desc: "filters which signals trigger on-signal-patch"},
-	"data-preserve-attr":    {Desc: "preserves attribute values during morph"},
-	"data-ref":              {AllowsKey: true, Desc: "creates signal referencing the DOM element"},
-	"data-show":             {Desc: "toggles visibility based on expression"},
-	"data-signals":          {AllowsKey: true, Desc: "defines/paches reactive signals"},
-	"data-style":            {AllowsKey: true, Desc: "sets inline CSS style from expression"},
-	"data-text":             {Desc: "binds text content to expression"},
+	"data-preserve-attr":          {Desc: "preserves attribute values during morph"},
+	"data-ref":                    {AllowsKey: true, Desc: "creates signal referencing the DOM element"},
+	"data-show":                   {Desc: "toggles visibility based on expression"},
+	"data-signals":                {AllowsKey: true, Desc: "defines/paches reactive signals"},
+	"data-style":                  {AllowsKey: true, Desc: "sets inline CSS style from expression"},
+	"data-text":                   {Desc: "binds text content to expression"},
 
 	// --- Pro attributes ---
-	"data-animate":         {Pro: true, AllowsKey: true, Desc: "animates element attributes over time"},
-	"data-custom-validity": {Pro: true, Desc: "custom validation message for form inputs"},
-	"data-match-media":     {Pro: true, AllowsKey: true, Desc: "sets signal based on media query match"},
-	"data-on-raf":          {Pro: true, Desc: "executes on requestAnimationFrame"},
-	"data-on-resize":       {Pro: true, Desc: "executes on element resize"},
-	"data-persist":         {Pro: true, AllowsKey: true, Desc: "persists signals to localStorage"},
-	"data-query-string":    {Pro: true, Desc: "syncs signals with URL query string"},
-	"data-replace-url":     {Pro: true, Desc: "replaces browser URL without reload"},
+	"data-animate":          {Pro: true, AllowsKey: true, Desc: "animates element attributes over time"},
+	"data-custom-validity":  {Pro: true, Desc: "custom validation message for form inputs"},
+	"data-match-media":      {Pro: true, AllowsKey: true, Desc: "sets signal based on media query match"},
+	"data-on-raf":           {Pro: true, Desc: "executes on requestAnimationFrame"},
+	"data-on-resize":        {Pro: true, Desc: "executes on element resize"},
+	"data-persist":          {Pro: true, AllowsKey: true, Desc: "persists signals to localStorage"},
+	"data-query-string":     {Pro: true, Desc: "syncs signals with URL query string"},
+	"data-replace-url":      {Pro: true, Desc: "replaces browser URL without reload"},
 	"data-scroll-into-view": {Pro: true, Desc: "scrolls element into view"},
-	"data-view-transition": {Pro: true, Desc: "sets view-transition-name style"},
+	"data-view-transition":  {Pro: true, Desc: "sets view-transition-name style"},
 }
 
 // attrPrefixes sorted longest-first for matching.
@@ -115,23 +119,23 @@ func init() {
 // validModifiers tracks which attributes accept which modifiers.
 // '*' means any modifier is valid for that attribute.
 var attrModifiers = map[string][]string{
-	"data-bind":      {"case", "prop", "event"},
-	"data-class":     {"case"},
-	"data-computed":  {"case"},
-	"data-indicator": {"case"},
-	"data-init":      {"delay", "viewtransition"},
-	"data-json-signals": {"terse"},
-	"data-on":        {"once", "passive", "capture", "case", "delay", "debounce", "throttle", "viewtransition", "window", "document", "outside", "prevent", "stop"},
-	"data-on-intersect": {"once", "exit", "half", "full", "threshold", "delay", "debounce", "throttle", "viewtransition"},
-	"data-on-interval":  {"duration", "viewtransition"},
-	"data-on-signal-patch": {"delay", "debounce", "throttle"},
-	"data-on-raf":       {"throttle"},
-	"data-on-resize":    {"debounce", "throttle"},
-	"data-persist":      {"session"},
-	"data-query-string": {"filter", "history"},
-	"data-ref":          {"case"},
+	"data-bind":             {"case", "prop", "event"},
+	"data-class":            {"case"},
+	"data-computed":         {"case"},
+	"data-indicator":        {"case"},
+	"data-init":             {"delay", "viewtransition"},
+	"data-json-signals":     {"terse"},
+	"data-on":               {"once", "passive", "capture", "case", "delay", "debounce", "throttle", "viewtransition", "window", "document", "outside", "prevent", "stop"},
+	"data-on-intersect":     {"once", "exit", "half", "full", "threshold", "delay", "debounce", "throttle", "viewtransition"},
+	"data-on-interval":      {"duration", "viewtransition"},
+	"data-on-signal-patch":  {"delay", "debounce", "throttle"},
+	"data-on-raf":           {"throttle"},
+	"data-on-resize":        {"debounce", "throttle"},
+	"data-persist":          {"session"},
+	"data-query-string":     {"filter", "history"},
+	"data-ref":              {"case"},
 	"data-scroll-into-view": {"smooth", "instant", "auto", "hstart", "hcenter", "hend", "hnearest", "vstart", "vcenter", "vend", "vnearest", "focus"},
-	"data-signals":      {"case", "ifmissing"},
+	"data-signals":          {"case", "ifmissing"},
 }
 
 // --------------- Action patterns ---------------
@@ -373,14 +377,14 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 		for _, a := range foreignAttrsFound {
 			line, col := getAttrPosition(n, a)
 			*results = append(*results, lintResult{
-				Severity:  sevError,
-				File:      path,
-				Line:      line,
-				Col:       col,
-				Element:   tag,
-				Attribute: a.Key,
-				Code:      "FOREIGN_ATTR",
-				Message:   fmt.Sprintf("'%s' is Alpine.js/Vue.js syntax — use Datastar equivalents", a.Key),
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  a.Key,
+				Code:       "FOREIGN_ATTR",
+				Message:    fmt.Sprintf("'%s' is Alpine.js/Vue.js syntax — use Datastar equivalents", a.Key),
 				Suggestion: "Replace with Datastar attributes: data-bind, data-on:click, data-signals, etc.",
 			})
 		}
@@ -392,6 +396,7 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 		if tag == "form" {
 			checkFormSubmitMissing(n, path, tag, results)
 		}
+		checkModal(n, path, tag, results)
 		checkScriptDeferMissing(n, path, tag, results)
 		return
 	}
@@ -486,6 +491,10 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 		checkForm(n, path, results)
 		checkFormSubmitMissing(n, path, tag, results)
 	}
+
+	// DaisyUI modal: <dialog class="modal"> must toggle via data-class,
+	// not data-show (data-show won't add the modal-open class DaisyUI needs).
+	checkModal(n, path, tag, results)
 
 	// <script> tag loading Datastar must have defer.
 	checkScriptDeferMissing(n, path, tag, results)
@@ -1199,6 +1208,38 @@ func checkFormSubmitMissing(n *html.Node, path, tag string, results *[]lintResul
 	}
 }
 
+// checkModal detects DaisyUI modals written the wrong way. A
+// <dialog class="modal"> toggles visibility via the `modal-open` class, which
+// DaisyUI expects to be toggled with data-class (e.g. data-class='{"modal-open":
+// $open}'). Using data-show instead will not add the modal-open class, so the
+// modal never opens. This check only fires for dialog elements carrying the
+// DaisyUI `modal` class — data-show elsewhere is perfectly valid.
+func checkModal(n *html.Node, path, tag string, results *[]lintResult) {
+	if tag != "dialog" {
+		return
+	}
+	classOK, classAttr := getAttr(n, "class")
+	if !classOK || !containsClass(classAttr.Val, "modal") {
+		return
+	}
+	showOK, showAttr := getAttr(n, "data-show")
+	if !showOK {
+		return
+	}
+	line, col := getAttrPosition(n, showAttr)
+	*results = append(*results, lintResult{
+		Severity:   sevWarning,
+		File:       path,
+		Line:       line,
+		Col:        col,
+		Element:    tag,
+		Attribute:  "data-show",
+		Code:       "MODAL_DATA_SHOW",
+		Message:    "<dialog class=\"modal\"> uses data-show — DaisyUI modals need the modal-open class toggled via data-class, so this modal will not open",
+		Suggestion: "Use data-class='{\"modal-open\": $open}' instead of data-show on the dialog element",
+	})
+}
+
 // checkScriptDeferMissing detects <script> tags loading Datastar without
 // 'defer' attribute. Datastar expects the DOM to be ready before processing.
 func checkScriptDeferMissing(n *html.Node, path, tag string, results *[]lintResult) {
@@ -1437,8 +1478,8 @@ var validHyphenPrefixes = []string{
 	"data-on-interval",
 	"data-on-signal-patch",
 	"data-on-signal-patch-filter",
-	"data-on-raf",         // Pro
-	"data-on-resize",      // Pro
+	"data-on-raf",    // Pro
+	"data-on-resize", // Pro
 }
 
 func isValidHyphenAttr(name string) bool {
@@ -1458,47 +1499,47 @@ func isValidHyphenAttr(name string) bool {
 // Source: dictator-datastar v0.1.0 typos.rs + Datastar engine.ts real errors.
 var commonTypos = map[string]string{
 	// Wrong separator (hyphen vs colon) — use data-on:eventName
-	"data-on-click":        "data-on:click",
-	"data-on-submit":       "data-on:submit",
-	"data-on-input":        "data-on:input",
-	"data-on-change":       "data-on:change",
-	"data-on-keydown":      "data-on:keydown",
-	"data-on-keyup":        "data-on:keyup",
-	"data-on-focus":        "data-on:focus",
-	"data-on-blur":         "data-on:blur",
-	"data-on-mouseenter":    "data-on:mouseenter",
-	"data-on-mouseleave":    "data-on:mouseleave",
-	"data-bind-value":      "data-bind:value",
-	"data-bind-checked":    "data-bind:checked",
-	"data-attr-disabled":   "data-attr:disabled",
-	"data-attr-href":       "data-attr:href",
-	"data-class-active":    "data-class:active",
-	"data-style-color":     "data-style:color",
+	"data-on-click":      "data-on:click",
+	"data-on-submit":     "data-on:submit",
+	"data-on-input":      "data-on:input",
+	"data-on-change":     "data-on:change",
+	"data-on-keydown":    "data-on:keydown",
+	"data-on-keyup":      "data-on:keyup",
+	"data-on-focus":      "data-on:focus",
+	"data-on-blur":       "data-on:blur",
+	"data-on-mouseenter": "data-on:mouseenter",
+	"data-on-mouseleave": "data-on:mouseleave",
+	"data-bind-value":    "data-bind:value",
+	"data-bind-checked":  "data-bind:checked",
+	"data-attr-disabled": "data-attr:disabled",
+	"data-attr-href":     "data-attr:href",
+	"data-class-active":  "data-class:active",
+	"data-style-color":   "data-style:color",
 
 	// Common misspellings
-	"data-intersects":      "data-on-intersect",
-	"data-intersect":       "data-on-intersect",
-	"data-onload":          "data-on:load or data-init",
-	"data-onclick":         "data-on:click",
-	"data-onsubmit":        "data-on:submit",
+	"data-intersects": "data-on-intersect",
+	"data-intersect":  "data-on-intersect",
+	"data-onload":     "data-on:load or data-init",
+	"data-onclick":    "data-on:click",
+	"data-onsubmit":   "data-on:submit",
 
 	// Wrong pluralization
-	"data-signal":          "data-signals",
+	"data-signal": "data-signals",
 
 	// Old/wrong API names
-	"data-visible":         "data-show",
-	"data-hidden":          "data-show (with negation)",
-	"data-content":         "data-text or data-html",
-	"data-value":           "data-bind",
-	"data-model":           "data-bind",
+	"data-visible": "data-show",
+	"data-hidden":  "data-show (with negation)",
+	"data-content": "data-text or data-html",
+	"data-value":   "data-bind",
+	"data-model":   "data-bind",
 
 	// Vue/Alpine names ported with data- prefix
-	"data-if":              "data-show",
-	"data-else":            "data-show (with negation)",
-	"data-v-show":          "data-show",
-	"data-v-if":            "data-show",
-	"data-x-show":          "data-show",
-	"data-x-if":            "data-show",
+	"data-if":     "data-show",
+	"data-else":   "data-show (with negation)",
+	"data-v-show": "data-show",
+	"data-v-if":   "data-show",
+	"data-x-show": "data-show",
+	"data-x-if":   "data-show",
 }
 
 func suggestAttr(name string) (string, bool) {
@@ -1517,10 +1558,10 @@ func suggestAttr(name string) (string, bool) {
 	// 3. Dynamic check: data-bind-*, data-attr-*, data-class-*, data-style-*
 	//    with hyphens instead of colons.
 	prefixToColon := map[string]string{
-		"data-bind-":   "data-bind:",
-		"data-attr-":   "data-attr:",
-		"data-class-":  "data-class:",
-		"data-style-":  "data-style:",
+		"data-bind-":      "data-bind:",
+		"data-attr-":      "data-attr:",
+		"data-class-":     "data-class:",
+		"data-style-":     "data-style:",
 		"data-indicator-": "data-indicator:",
 	}
 	for wrongPrefix, correctPrefix := range prefixToColon {
