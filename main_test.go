@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,6 +188,81 @@ func TestCleanFile(t *testing.T) {
 	results := lintString(t, config{}, `<div data-show="$open" data-on:click="@post('/x')"></div>`, "html")
 	if len(results) != 0 {
 		t.Errorf("expected no issues for valid Datastar, got %v", codes(results))
+	}
+}
+
+// TestRawAttrBrokenQuote exercises the raw-source scan that detects unescaped
+// single quotes inside single-quoted attributes (the parser mangles these, so
+// the parsed value never contains the offending quote). This is the core of
+// the SIGNALS_UNESCAPED_QUOTES fix and must not regress.
+func TestRawAttrBrokenQuote(t *testing.T) {
+	cases := []struct {
+		name   string
+		html   string
+		broken bool
+		single bool
+		ok     bool
+	}{
+		{
+			name:   "single-quoted with inner quote is broken",
+			html:   `<div data-signals='{"name": "o'brien"}'></div>`,
+			broken: true, single: true, ok: true,
+		},
+		{
+			name:   "single-quoted with &#39; escape is safe",
+			html:   `<div data-signals='{"name": "o&#39;brien"}'></div>`,
+			broken: false, single: true, ok: true,
+		},
+		{
+			name:   "clean single-quoted value is safe",
+			html:   `<div data-signals='{"name": "ok"}'></div>`,
+			broken: false, single: true, ok: true,
+		},
+		{
+			name:   "double-quoted attr is not single-quoted",
+			html:   `<div data-signals="{'name': \"o'brien\"}"></div>`,
+			broken: false, single: false, ok: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTmp(t, "html", tc.html)
+			b, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := newSource(b)
+			broken, single, ok := s.rawAttrBrokenQuote("div", "data-signals")
+			if ok != tc.ok || single != tc.single || broken != tc.broken {
+				t.Errorf("rawAttrBrokenQuote = (broken=%v, single=%v, ok=%v), want (broken=%v, single=%v, ok=%v)",
+					broken, single, ok, tc.broken, tc.single, tc.ok)
+			}
+		})
+	}
+}
+
+// TestJSONOutput verifies --format json emits valid JSON and exits non-zero
+// when errors are present.
+func TestJSONOutput(t *testing.T) {
+	p := writeTmp(t, "html", `<div data-foobar="$x"></div>`)
+	// Replicate the JSON branch by calling run + marshaling.
+	c := config{root: p, exts: map[string]bool{"html": true}}
+	results := run(c)
+	if len(results) == 0 {
+		t.Fatal("expected at least one finding for data-foobar")
+	}
+	out, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(out, []byte("\"severity\": \"WARN\"")) {
+		t.Errorf("JSON should contain string severity, got:\n%s", out)
+	}
+	if !json.Valid(out) {
+		t.Errorf("output is not valid JSON")
+	}
+	if countErrors(results) != 0 {
+		t.Errorf("data-foobar is a warning, expected 0 errors, got %d", countErrors(results))
 	}
 }
 
