@@ -545,8 +545,25 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 	}
 
 	// Check Pro-only attributes.
-	if info.Pro && !cfg.strict {
-		// Only warn in strict mode; otherwise skip.
+	// Non-strict mode: warn (so adopters know they depend on a paid feature).
+	// Strict mode (-s): error, so CI fails if someone ships a Pro feature
+	// without the license.
+	if info.Pro {
+		sev := sevWarning
+		if cfg.strict {
+			sev = sevError
+		}
+		*results = append(*results, lintResult{
+			Severity:   sev,
+			File:       path,
+			Line:       line,
+			Col:        col,
+			Element:    tag,
+			Attribute:  name,
+			Code:       "PRO_ATTR",
+			Message:    fmt.Sprintf("'%s' is a Datastar Pro-only attribute", name),
+			Suggestion: "Requires a Datastar Pro license; remove or purchase a license to use in CI",
+		})
 		return
 	}
 
