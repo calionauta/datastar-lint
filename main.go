@@ -37,6 +37,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -227,6 +228,23 @@ func main() {
 	}
 
 	results := run(cfg)
+
+	// Stable, deterministic ordering so CI logs and Editor output are reproducible
+	// across platforms (filepath.Walk order is not guaranteed). Sort by
+	// file, then line, then col, then code as a stable tie-breaker.
+	sort.SliceStable(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		if a.Col != b.Col {
+			return a.Col < b.Col
+		}
+		return a.Code < b.Code
+	})
 
 	if len(results) == 0 {
 		fmt.Println("✓ No Datastar issues found.")
