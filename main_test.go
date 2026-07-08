@@ -273,3 +273,41 @@ func codes(results []lintResult) []string {
 	}
 	return out
 }
+
+// TestAllDocumentedRules is a regression net: each Datastar rule listed in the
+// README must fire on a minimal fixture. If a rule is renamed, removed, or
+// stops firing, this test fails — protecting against silent lint loss.
+func TestAllDocumentedRules(t *testing.T) {
+	cases := []struct {
+		code    string
+		fixture string
+		ext     string
+	}{
+		{"BIND_NO_NAME", `<input data-bind="">`, "data-bind without signal name"},
+		{"FORM_SUBMIT_NO_PREVENT", `<form data-on:submit="@post('/x')"></form>`, "submit without __prevent"},
+		{"FORM_MISSING_ENCTYPE", `<form data-on:submit__prevent="@post('/x', { contentType: 'form' })"><input type="file" name="f"></form>`, "file input without multipart enctype"},
+		{"INDICATOR_AFTER_INIT", `<div data-init="$x=1" data-indicator="$y"></div>`, "indicator after init"},
+		{"EXPR_MISSING_DOLLAR", `<div data-text="name"></div>`, "signal name missing $"},
+		{"GET_WITH_MUTATION", `<div data-on:click="@get('/api/delete')"></div>`, "GET with mutation endpoint"},
+		{"SDK_FUNC_IN_JS", `<div data-on:click="datastar.PostSSE('/x')"></div>`, "SDK func in browser"},
+		{"USE_REDIRECT", `<div data-on:click="window.location='/x'"></div>`, "window.location redirect"},
+		{"INTERSECT_NO_ACTION", `<div data-on-intersect="true"></div>`, "intersect without action"},
+		{"PERSIST_NO_KEY", `<div data-persist></div>`, "persist without key"},
+		{"REF_EMPTY", `<div data-ref></div>`, "ref without name"},
+		{"TEXT_EMPTY", `<div data-text=""></div>`, "text empty"},
+		{"EFFECT_EMPTY", `<div data-effect=""></div>`, "effect empty"},
+		{"COMPUTED_EMPTY", `<div data-computed></div>`, "computed empty"},
+		{"SCROLL_NO_TARGET", `<div data-scroll-into-view></div>`, "scroll without target"},
+		{"ACTION_URL_FORMAT", `<div data-on:click="@get('api/x')"></div>`, "action URL not rooted"},
+		{"SCRIPT_DEFER_MISSING", `<script type="module" src="/datastar.js"></script>`, "script without defer"},
+		{"JSON_SIGNALS_NO_TERSE", `<div data-json-signals="{}"></div>`, "json-signals without terse"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			results := lintString(t, config{}, tc.fixture, "html")
+			if r := hasCode(t, results, tc.code); r == nil {
+				t.Errorf("%s: expected %s for %s; got %v", tc.code, tc.code, tc.ext, codes(results))
+			}
+		})
+	}
+}
