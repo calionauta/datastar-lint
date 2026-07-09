@@ -282,6 +282,196 @@ func codes(results []lintResult) []string {
 	return out
 }
 
+// --------------- E2E tests (full pipeline with real files) ---------------
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertHasCode(t *testing.T, results []lintResult, code string) {
+	t.Helper()
+	if hasCode(t, results, code) == nil {
+		t.Errorf("expected result code %s; got %v", code, codes(results))
+	}
+}
+
+func assertNoCode(t *testing.T, results []lintResult, code string) {
+	t.Helper()
+	if hasCode(t, results, code) != nil {
+		t.Errorf("unexpected result code %s; got %v", code, codes(results))
+	}
+}
+
+func TestE2EGoBad(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.go", `package p
+import "github.com/starfederation/datastar-go/datastar"
+func handler(sse *datastar.ServerSentEventGenerator) {
+	datastar.PatchElements(sse, "<div></div>")
+	datastar.PatchElements(sse, "<div></div>", datastar.WithSelector(""))
+	datastar.PatchElementTempl(sse, nil)
+	datastar.MarshalAndPatchSignals(nil)
+}
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true})
+	assertHasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR")
+	assertHasCode(t, results, "PATCH_SELECTOR_EMPTY")
+	assertHasCode(t, results, "MERGE_SIGNALS_NIL")
+	if len(results) < 3 {
+		t.Errorf("expected at least 3 results, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2EGoGood(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/good.go", `package p
+import "github.com/starfederation/datastar-go/datastar"
+func handler(sse *datastar.ServerSentEventGenerator) {
+	datastar.PatchElements(sse, "<div id='x'>x</div>", datastar.WithSelector("#x"))
+	datastar.PatchElementTempl(sse, nil, datastar.WithSelectorID("x"))
+	datastar.MarshalAndPatchSignals(map[string]any{"key": "val"})
+}
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true})
+	if len(results) > 0 {
+		t.Errorf("expected 0 results for good.go, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2EPythonBad(t *testing.T) {
+	if LookupAnalyzer("python") == nil {
+		t.Skip("python analyzer not compiled (use -tags analyzer_python)")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.py", `from datastar_py import SSE
+def handler(sse):
+    SSE.patch_elements(sse, "<div></div>")
+    SSE.patch_elements(sse, "<div></div>", selector="")
+    SSE.remove_element(sse, "")
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"python": true})
+	assertHasCode(t, results, "PY_PATCH_NO_SELECTOR")
+	assertHasCode(t, results, "PY_PATCH_EMPTY_SELECTOR")
+	assertHasCode(t, results, "PY_REMOVE_NO_SELECTOR")
+}
+
+func TestE2EPythonGood(t *testing.T) {
+	if LookupAnalyzer("python") == nil {
+		t.Skip("python analyzer not compiled (use -tags analyzer_python)")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir+"/good.py", `from datastar_py import SSE
+def handler(sse):
+    SSE.patch_elements(sse, "<div id='x'>x</div>", selector="#x")
+    SSE.remove_element(sse, "#x")
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"python": true})
+	if len(results) > 0 {
+		t.Errorf("expected 0 results for good.py, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2ETSBad(t *testing.T) {
+	if LookupAnalyzer("typescript") == nil {
+		t.Skip("typescript analyzer not compiled (use -tags analyzer_ts)")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.ts", `import { createStream } from '@starfederation/datastar-sdk'
+const stream = createStream({} as any)
+stream.patchElements('<div></div>')
+stream.removeElement('')
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"typescript": true})
+	assertHasCode(t, results, "TS_PATCH_NO_SELECTOR")
+	assertHasCode(t, results, "TS_REMOVE_NO_SELECTOR")
+}
+
+func TestE2ETSGood(t *testing.T) {
+	if LookupAnalyzer("typescript") == nil {
+		t.Skip("typescript analyzer not compiled (use -tags analyzer_ts)")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir+"/good.ts", `import { createStream } from '@starfederation/datastar-sdk'
+const stream = createStream({} as any)
+stream.patchElements('<div id="x">x</div>', { selector: '#x' })
+stream.removeElement('#x')
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"typescript": true})
+	if len(results) > 0 {
+		t.Errorf("expected 0 results for good.ts, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2EHTMLBad(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.html", `<div data-foobar="$x"></div>
+<button data-on-clik="@post('/x')">go</button>
+<dialog class="modal" data-show="$open">m</dialog>
+<div data-signals="{'name': "o'brien"}"></div>
+`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"html": true})
+	assertHasCode(t, results, "UNKNOWN_ATTR")
+	assertHasCode(t, results, "UNKNOWN_ATTR_TYPO")
+	assertHasCode(t, results, "MODAL_DATA_SHOW")
+	assertHasCode(t, results, "SIGNALS_UNESCAPED_QUOTES")
+}
+
+func TestE2EHTMLGood(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/good.html", `<div data-show="$open" data-on:click="@post('/x')"></div>`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"html": true})
+	if len(results) > 0 {
+		t.Errorf("expected 0 results for good.html, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2EMultiAnalyzer(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.go", `package p
+import "github.com/starfederation/datastar-go/datastar"
+func handler(sse *datastar.ServerSentEventGenerator) { datastar.PatchElements(sse, "") }
+`)
+	writeFile(t, dir+"/bad.html", `<div data-foobar="$x"></div>`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true, "html": true})
+	assertHasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR") // from Go analyzer
+	assertHasCode(t, results, "UNKNOWN_ATTR")               // from HTML analyzer
+}
+
+func TestE2ECrossReference(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/handler.go", `package p
+import "github.com/starfederation/datastar-go/datastar"
+func handler(sse *datastar.ServerSentEventGenerator) {
+	datastar.PatchElements(sse, "", datastar.WithSelector("#orphan"))
+}
+`)
+	writeFile(t, dir+"/template.templ", `<div id="existing">content</div>`)
+	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true, "html": true})
+	assertHasCode(t, results, "CROSSREF_ORPHAN_SELECTOR")
+}
+
+func TestE2EJSONOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/bad.go", `package p
+import "github.com/starfederation/datastar-go/datastar"
+func handler(sse *datastar.ServerSentEventGenerator) { datastar.PatchElements(sse, "") }
+`)
+	results := run(config{root: dir, recursive: true, format: "json"}, map[string]bool{"go": true})
+	out, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(out) {
+		t.Error("JSON output is not valid JSON")
+	}
+	if !strings.Contains(string(out), "\"severity\": \"WARN\"") {
+		t.Errorf("JSON should contain WARN severity, got:\n%s", out)
+	}
+}
+
 // --------------- Go analyzer tests ---------------
 
 func TestGoPatchNoSelector(t *testing.T) {
