@@ -202,6 +202,9 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 
 	// <script> tag loading Datastar must have defer.
 	checkScriptDeferMissing(n, path, tag, results)
+
+	// Check that SSE-reactive elements have an id for PatchElements anchoring.
+	checkPatchTargetID(n, path, tag, results)
 }
 
 // --------------- Datastar attribute validation ---------------

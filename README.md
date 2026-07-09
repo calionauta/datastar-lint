@@ -65,6 +65,7 @@ Every rule below was verified against the linter source. Each finding prints its
 - **`ACTION_URL_FORMAT`** — `@get()/@post()` URL should start with `/` (absolute path) or be a full URL. Severity: warning.
 - **`INTERSECT_NO_ACTION`** — `data-on-intersect` has no `@get()`/`@post()` action. Severity: warning.
 - **`PERSIST_NO_KEY`** — `data-persist` without a key persists all signals (may persist unwanted state). Use `data-persist:myKey`. Severity: hint.
+- **`PATCH_ELEMENTS_NO_ID`** — An element with `data-on:load` (SSE subscription) or `data-on-signal-patch` but no `id` attribute. Datastar's JS client needs an `#id` anchor to morph the fragment — without it the patch silently fails (`PatchElementsNoTargetsFound`). Template-side heuristic: the linter can't see the Go handler's `WithSelector("#id")` call, so this is a warning, not an error. If `data-on:load` runs a one-off `@get()` (not a stream), the warning is a false positive. Severity: warning.
 
 ### Forms
 

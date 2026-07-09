@@ -274,6 +274,47 @@ func codes(results []lintResult) []string {
 	return out
 }
 
+func TestPatchElementsNoID(t *testing.T) {
+	// Bad: data-on:load with SSE action, no id.
+	results := lintString(t, config{}, `<div data-on:load="@get('/todos/stream')">content</div>`, "html")
+	r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID")
+	if r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_ID for SSE subscriber without id; got %v", codes(results))
+	} else if r.Severity != sevWarning {
+		t.Errorf("PATCH_ELEMENTS_NO_ID should be WARN, got %v", r.Severity)
+	}
+
+	// Bad: data-on-signal-patch without id.
+	results = lintString(t, config{}, `<div data-on-signal-patch="$x = $event.detail.foo">no id</div>`, "html")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_ID for data-on-signal-patch without id; got %v", codes(results))
+	}
+
+	// Good: data-on:load WITH id — valid anchor.
+	results = lintString(t, config{}, `<div id="todo-list" data-on:load="@get('/todos/stream')">content</div>`, "html")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID"); r != nil {
+		t.Errorf("expected no PATCH_ELEMENTS_NO_ID when id is present; got %v", codes(results))
+	}
+
+	// Good: data-on:load without @ action (plain JS) is not an SSE subscriber.
+	results = lintString(t, config{}, `<div data-on:load="$x = 1">plain JS</div>`, "html")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID"); r != nil {
+		t.Errorf("expected no PATCH_ELEMENTS_NO_ID for plain JS; got %v", codes(results))
+	}
+
+	// Good: no data-on:load at all — no SSE subscription.
+	results = lintString(t, config{}, `<div data-text="$name"></div>`, "html")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID"); r != nil {
+		t.Errorf("expected no PATCH_ELEMENTS_NO_ID for element without SSE; got %v", codes(results))
+	}
+
+	// Good: element with empty id should still flag (id="" is not a valid anchor).
+	results = lintString(t, config{}, `<div id="" data-on:load="@get('/stream')">empty id</div>`, "html")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_ID"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_ID for SSE subscriber with empty id; got %v", codes(results))
+	}
+}
+
 // TestAllDocumentedRules is a regression net: each Datastar rule listed in the
 // README must fire on a minimal fixture. If a rule is renamed, removed, or
 // stops firing, this test fails — protecting against silent lint loss.
@@ -301,6 +342,7 @@ func TestAllDocumentedRules(t *testing.T) {
 		{"ACTION_URL_FORMAT", `<div data-on:click="@get('api/x')"></div>`, "action URL not rooted"},
 		{"SCRIPT_DEFER_MISSING", `<script type="module" src="/datastar.js"></script>`, "script without defer"},
 		{"JSON_SIGNALS_NO_TERSE", `<div data-json-signals="{}"></div>`, "json-signals without terse"},
+		{"PATCH_ELEMENTS_NO_ID", `<div data-on:load="@get('/todos/stream')">no id</div>`, "SSE subscriber without id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
