@@ -1,14 +1,9 @@
-// datastar-lint — validates Datastar HTML attributes in any HTML-emitting project.
+// datastar-lint — validates Datastar HTML attributes and backend SDK calls.
 //
-// Language-agnostic by design. Datastar is an HTML/SSE protocol usable from
-// Go (Templ), Python (Jinja/Django), Rust, JavaScript, etc. This linter
-// parses HTML output and checks every data-* attribute against the Datastar
-// specification (free + Pro). Supported input formats:
-//
-//   - .html, .htm   Plain HTML (any language)
-//   - .templ        Templ components (Go). Linted by stripping the Templ
-//     package/import declarations and treating the result as
-//     HTML; attribute-level checks apply unchanged.
+// Multi-language by design. Built-in analyzers:
+//   - html   (default): lints .html, .htm, .templ files for Datastar attribute correctness
+//   - go     (stdlib):  lints .go files for missing PatchElements selectors
+//   - python (opt-in):  lints .py files for missing patch_elements selectors (build tag: analyzer_python)
 //
 // Usage:
 //
@@ -16,18 +11,15 @@
 //
 // Flags:
 //
-//	-r, --recursive    Walk directories recursively
-//	-e, --ext string   File extensions to check (default: "html,htm,templ")
-//	-s, --strict       Enable strict checks (Pro attributes unknown, etc.)
+//	-r, --recursive          Walk directories recursively
+//	-a, --analyzers string   Comma-separated analyzers (default: "html")
+//	-e, --ext string         File extensions to check (default: "html,htm,templ")
+//	-s, --strict             Enable strict checks (Pro attributes, etc.)
+//	--format string          Output format: text or json
 //
 // Install:
 //
 //	go install github.com/calionauta/datastar-lint@latest
-//
-// Integration:
-//
-//	Run after `templ generate` as a post-generation validation step:
-//	  templ generate && datastar-lint -r ./web/
 package main
 
 import (
@@ -51,8 +43,12 @@ type config struct {
 func main() {
 	var cfg config
 	var extList string
+	var analyzerList string
+
 	flag.BoolVar(&cfg.recursive, "r", false, "Walk directories recursively")
 	flag.BoolVar(&cfg.recursive, "recursive", false, "Walk directories recursively")
+	flag.StringVar(&analyzerList, "a", "html", "Comma-separated analyzers")
+	flag.StringVar(&analyzerList, "analyzers", "html", "Comma-separated analyzers")
 	flag.StringVar(&extList, "e", "html,htm,templ", "Comma-separated file extensions")
 	flag.StringVar(&extList, "ext", "html,htm,templ", "Comma-separated file extensions")
 	flag.BoolVar(&cfg.strict, "s", false, "Enable strict checks (Pro attr unknowns, etc.)")
@@ -66,18 +62,14 @@ func main() {
 	}
 
 	args := flag.Args()
-	if len(args) == 0 {
-		// Default to current directory.
-		cfg.root = "."
-	} else {
+	cfg.root = "."
+	if len(args) > 0 {
 		cfg.root = args[0]
 	}
 
-	results := run(cfg)
+	activeAnalyzers := parseAnalyzerFlag(analyzerList)
+	results := run(cfg, activeAnalyzers)
 
-	// Stable, deterministic ordering so CI logs and Editor output are reproducible
-	// across platforms (filepath.Walk order is not guaranteed). Sort by
-	// file, then line, then col, then code as a stable tie-breaker.
 	sort.SliceStable(results, func(i, j int) bool {
 		a, b := results[i], results[j]
 		if a.File != b.File {
@@ -99,7 +91,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(string(out))
-		if errCount := countErrors(results); errCount > 0 {
+		if countErrors(results) > 0 {
 			os.Exit(1)
 		}
 		return
@@ -110,7 +102,6 @@ func main() {
 		return
 	}
 
-	// Sort by file then line.
 	fmt.Printf("\n%d Datastar lint issue(s) found:\n\n", len(results))
 	for _, r := range results {
 		source := fmt.Sprintf("%s:%d:%d", r.File, r.Line, r.Col)
@@ -135,29 +126,61 @@ func main() {
 	}
 }
 
-func run(cfg config) []lintResult {
+// run collects files for each active analyzer and dispatches linting.
+// When both "go" and "html" analyzers are active, it also runs cross-reference
+// checks (e.g., orphan selectors that reference non-existent template ids).
+func run(cfg config, active map[string]bool) []lintResult {
 	info, err := os.Stat(cfg.root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
-	var files []string
-	if info.IsDir() {
-		files = collectFiles(cfg.root, cfg.recursive, cfg.exts)
-	} else {
-		files = []string{cfg.root}
+	var all []lintResult
+	var allFiles []string // accumulated for cross-reference
+
+	for _, a := range analyzers {
+		if !active[a.Name()] {
+			continue
+		}
+
+		exts := make(map[string]bool)
+		for _, ext := range a.FileExtensions() {
+			exts[ext] = true
+		}
+
+		var files []string
+		if info.IsDir() {
+			files = collectFiles(cfg.root, cfg.recursive, exts)
+		} else {
+			ext := strings.TrimPrefix(filepath.Ext(cfg.root), ".")
+			if exts[ext] {
+				files = []string{cfg.root}
+			}
+		}
+
+		if len(files) == 0 {
+			continue
+		}
+
+		for _, f := range files {
+			r := a.Lint(f, cfg)
+			all = append(all, r...)
+		}
+		allFiles = append(allFiles, files...)
 	}
 
-	var all []lintResult
-	for _, f := range files {
-		results := lintFile(f, cfg)
-		all = append(all, results...)
+	// Cross-reference: when both Go and HTML analyzers are active, check
+	// that WithSelector("#id") references exist as actual element ids.
+	if active["go"] && active["html"] {
+		goFiles, htmlFiles := computeCrossRefFiles(allFiles)
+		crossResults := CrossReference(goFiles, htmlFiles)
+		all = append(all, crossResults...)
 	}
+
 	return all
 }
 
-// countErrors returns the number of error-severity findings.
 func countErrors(results []lintResult) int {
 	n := 0
 	for _, r := range results {
@@ -172,7 +195,7 @@ func collectFiles(root string, recursive bool, exts map[string]bool) []string {
 	var files []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip unreadable
+			return nil
 		}
 		if info.IsDir() {
 			if !recursive && path != root {

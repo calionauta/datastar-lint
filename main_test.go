@@ -22,14 +22,23 @@ func writeTmp(t *testing.T, ext, content string) string {
 }
 
 // lintString lints an in-memory document and returns all findings.
-func lintString(t *testing.T, cfg config, content, ext string) []lintResult {
+// By default it runs the "html" analyzer. Pass analyzers via the last arg
+// to test other analyzers (e.g., lintString(t, cfg, src, "go", "go")).
+func lintString(t *testing.T, cfg config, content, ext string, analyzers ...string) []lintResult {
 	t.Helper()
 	p := writeTmp(t, ext, content)
 	c := cfg
 	c.root = p
 	c.recursive = false
 	c.exts = map[string]bool{ext: true}
-	return run(c)
+	active := map[string]bool{"html": true}
+	if len(analyzers) > 0 {
+		active = make(map[string]bool)
+		for _, a := range analyzers {
+			active[a] = true
+		}
+	}
+	return run(c, active)
 }
 
 func hasCode(t *testing.T, results []lintResult, code string) *lintResult {
@@ -247,7 +256,7 @@ func TestJSONOutput(t *testing.T) {
 	p := writeTmp(t, "html", `<div data-foobar="$x"></div>`)
 	// Replicate the JSON branch by calling run + marshaling.
 	c := config{root: p, exts: map[string]bool{"html": true}}
-	results := run(c)
+	results := run(c, map[string]bool{"html": true})
 	if len(results) == 0 {
 		t.Fatal("expected at least one finding for data-foobar")
 	}
@@ -272,6 +281,146 @@ func codes(results []lintResult) []string {
 		out = append(out, r.Code)
 	}
 	return out
+}
+
+// --------------- Go analyzer tests ---------------
+
+func TestGoPatchNoSelector(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\") }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestGoPatchWithSelectorOK(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#list\")) }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r != nil {
+		t.Errorf("expected no PATCH_ELEMENTS_NO_SELECTOR when selector given; got %v", codes(results))
+	}
+}
+
+func TestGoEmptySelector(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"\")) }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_SELECTOR_EMPTY"); r == nil {
+		t.Errorf("expected PATCH_SELECTOR_EMPTY; got %v", codes(results))
+	}
+}
+
+func TestGoMarhalSignalsNil(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.MarshalAndPatchSignals(nil) }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "MERGE_SIGNALS_NIL"); r == nil {
+		t.Errorf("expected MERGE_SIGNALS_NIL; got %v", codes(results))
+	}
+}
+
+// --------------- Python/TS analyzer tests (build-tag gated) ---------------
+
+func skipIfAnalyzerMissing(t *testing.T, name string) {
+	t.Helper()
+	if LookupAnalyzer(name) == nil {
+		t.Skipf("%s analyzer not compiled (use -tags analyzer_%s)", name, name)
+	}
+}
+
+func TestPythonPatchNoSelector(t *testing.T) {
+	skipIfAnalyzerMissing(t, "python")
+	src := "from datastar_py import SSE\nSSE.patch_elements(ctx, \"<div></div>\")"
+	results := lintString(t, config{}, src, "py", "python")
+	if r := hasCode(t, results, "PY_PATCH_NO_SELECTOR"); r == nil {
+		t.Errorf("expected PY_PATCH_NO_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestPythonPatchWithSelectorOK(t *testing.T) {
+	skipIfAnalyzerMissing(t, "python")
+	src := "from datastar_py import SSE\nSSE.patch_elements(ctx, \"<div></div>\", selector=\"#list\")"
+	results := lintString(t, config{}, src, "py", "python")
+	if r := hasCode(t, results, "PY_PATCH_NO_SELECTOR"); r != nil {
+		t.Errorf("expected no PY_PATCH_NO_SELECTOR when selector given; got %v", codes(results))
+	}
+}
+
+func TestPythonPatchEmptySelector(t *testing.T) {
+	skipIfAnalyzerMissing(t, "python")
+	src := "from datastar_py import SSE\nSSE.patch_elements(ctx, \"<div></div>\", selector=\"\")"
+	results := lintString(t, config{}, src, "py", "python")
+	if r := hasCode(t, results, "PY_PATCH_EMPTY_SELECTOR"); r == nil {
+		t.Errorf("expected PY_PATCH_EMPTY_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestTSPatchNoSelector(t *testing.T) {
+	skipIfAnalyzerMissing(t, "typescript")
+	src := "import { createStream } from '@starfederation/datastar-sdk'\nstream.patchElements('<div></div>')"
+	results := lintString(t, config{}, src, "ts", "typescript")
+	if r := hasCode(t, results, "TS_PATCH_NO_SELECTOR"); r == nil {
+		t.Errorf("expected TS_PATCH_NO_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestTSPatchWithSelectorOK(t *testing.T) {
+	skipIfAnalyzerMissing(t, "typescript")
+	src := "import { createStream } from '@starfederation/datastar-sdk'\nstream.patchElements('<div></div>', { selector: '#list' })"
+	results := lintString(t, config{}, src, "ts", "typescript")
+	if r := hasCode(t, results, "TS_PATCH_NO_SELECTOR"); r != nil {
+		t.Errorf("expected no TS_PATCH_NO_SELECTOR when selector given; got %v", codes(results))
+	}
+}
+
+func TestTSPatchEmptySelector(t *testing.T) {
+	skipIfAnalyzerMissing(t, "typescript")
+	src := "import { createStream } from '@starfederation/datastar-sdk'\nstream.patchElements('<div></div>', { selector: '' })"
+	results := lintString(t, config{}, src, "ts", "typescript")
+	if r := hasCode(t, results, "TS_PATCH_EMPTY_SELECTOR"); r == nil {
+		t.Errorf("expected TS_PATCH_EMPTY_SELECTOR; got %v", codes(results))
+	}
+}
+
+// --------------- Cross-reference tests ---------------
+
+func TestCrossRefOrphanSelector(t *testing.T) {
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#orphan-id\")) }"
+	htmlSrc := "<div id=\"existing-id\">hello</div>"
+
+	dir := t.TempDir()
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(dir+"/"+name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("handler.go", goSrc)
+	writeFile("template.templ", htmlSrc)
+
+	// Run with both Go and HTML analyzers
+	cfg := config{root: dir, recursive: true, exts: map[string]bool{"go": true, "templ": true}}
+	results := run(cfg, map[string]bool{"go": true, "html": true})
+	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r == nil {
+		t.Errorf("expected CROSSREF_ORPHAN_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestCrossRefNoOrphan(t *testing.T) {
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#existing-id\")) }"
+	htmlSrc := "<div id=\"existing-id\">hello</div>"
+
+	dir := t.TempDir()
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(dir+"/"+name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("handler.go", goSrc)
+	writeFile("template.templ", htmlSrc)
+
+	cfg := config{root: dir, recursive: true, exts: map[string]bool{"go": true, "templ": true}}
+	results := run(cfg, map[string]bool{"go": true, "html": true})
+	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r != nil {
+		t.Errorf("expected no CROSSREF_ORPHAN_SELECTOR when id matches; got %v", codes(results))
+	}
 }
 
 func TestPatchElementsNoID(t *testing.T) {
