@@ -13,13 +13,7 @@ func init() {
 }
 
 // GoAnalyzer lints .go files for Datastar SDK misuse.
-// It uses go/parser + go/ast (stdlib, no extra dependencies).
-//
-// Checks:
-//   - PATCH_ELEMENTS_NO_SELECTOR: PatchElements/PatchElementTempl/RenderAndPatch
-//     called without WithSelector/WithSelectorID/WithSelectorf
-//   - PATCH_SELECTOR_EMPTY: WithSelector("") or WithSelectorID("")
-//   - MERGE_SIGNALS_NIL: MarshalAndPatchSignals(nil)
+// Uses go/parser + go/ast (stdlib, no extra dependencies).
 type GoAnalyzer struct{}
 
 func (GoAnalyzer) Name() string             { return "go" }
@@ -49,41 +43,11 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 		}
 
 		funcName, pkgName := resolveCall(call)
+		isSSE := isSSEPkg(pkgName, sseAliases)
 
-		// Check 1: Patch functions require a selector.
-		if isPatchFunc(funcName) && isSSEPkg(pkgName, sseAliases) {
-			if !hasSelectorArg(call, sseAliases) {
-				pos := fset.Position(call.Pos())
-				results = append(results, lintResult{
-					Severity:   sevWarning,
-					File:       path,
-					Line:       pos.Line,
-					Col:        pos.Column,
-					Code:       "PATCH_ELEMENTS_NO_SELECTOR",
-					Message:    fmt.Sprintf("%s() called without WithSelector/WithSelectorID — client has no merge anchor", qualifiedCall(pkgName, funcName)),
-					Suggestion: "Add sdk.WithSelector(\"#id\") or sdk.WithSelectorID(\"id\") among the arguments. Without a CSS selector the Datastar JS client can't find the DOM target and throws PatchElementsNoTargetsFound.",
-				})
-			}
-		}
-
-		// Check 2: Empty selector.
-		if isPatchFunc(funcName) && isSSEPkg(pkgName, sseAliases) {
-			if isEmptySelectorArg(call) {
-				pos := fset.Position(call.Pos())
-				results = append(results, lintResult{
-					Severity:   sevWarning,
-					File:       path,
-					Line:       pos.Line,
-					Col:        pos.Column,
-					Code:       "PATCH_SELECTOR_EMPTY",
-					Message:    fmt.Sprintf("%s() called with empty selector string — silently dropped by SDK", qualifiedCall(pkgName, funcName)),
-					Suggestion: "Pass a non-empty selector: WithSelector(\"#actual-id\"). An empty string is ignored at the SDK's selector check (if options.Selector != \"\").",
-				})
-			}
-		}
-
-		// Check 3: MarshalAndPatchSignals(nil).
-		if funcName == "MarshalAndPatchSignals" && isSSEPkg(pkgName, sseAliases) {
+		// Check: MarshalAndPatchSignals(nil) — run for ANY qualified call,
+		// not just patch functions.
+		if funcName == "MarshalAndPatchSignals" && isSSE {
 			if isNilArg(call) {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
@@ -93,7 +57,90 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 					Col:        pos.Column,
 					Code:       "MERGE_SIGNALS_NIL",
 					Message:    "MarshalAndPatchSignals(nil) produces null on the wire",
-					Suggestion: "Pass an empty signals struct, a map, or a typed struct with fields. json.Marshal(nil) returns \"null\", overwriting existing signals with null.",
+					Suggestion: "Pass an empty signals struct, a map, or a typed struct with fields.",
+				})
+			}
+		}
+
+		// Check: PatchElementf format-arg mismatch.
+		if funcName == "PatchElementf" && isSSE {
+			if hasFormatMismatch(call) {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevHint,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_ELEMENTF_FORMAT",
+					Message:    "PatchElementf() format string has % verbs that may not match the number of value arguments",
+					Suggestion: "Verify that the format string has the correct number of % verbs for the value arguments.",
+				})
+			}
+		}
+
+		// Patch functions require a selector.
+		if !isPatchFunc(funcName) || !isSSE {
+			return true
+		}
+
+		if funcName == "RemoveElement" {
+			if len(call.Args) == 0 {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevWarning,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_ELEMENTS_NO_SELECTOR",
+					Message:    "RemoveElement() called with no arguments — remove target is unknown",
+					Suggestion: "Pass a CSS selector: RemoveElement(\"#element-id\"). The first argument is the selector string.",
+				})
+			} else if isEmptyRemoveElementArg(call) {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevWarning,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_SELECTOR_EMPTY",
+					Message:    "RemoveElement(\"\") called with empty selector — silently dropped by SDK",
+					Suggestion: "Pass a non-empty CSS selector: RemoveElement(\"#element-id\").",
+				})
+			} else if !hasRemoveElementSelector(call) {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevWarning,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_ELEMENTS_NO_SELECTOR",
+					Message:    "RemoveElement() called with non-string first argument — cannot verify selector",
+					Suggestion: "Pass a string CSS selector: RemoveElement(\"#element-id\").",
+				})
+			}
+		} else {
+			if !hasSelectorArg(call, sseAliases) {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevWarning,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_ELEMENTS_NO_SELECTOR",
+					Message:    fmt.Sprintf("%s() called without WithSelector/WithSelectorID — client has no merge anchor", qualifiedCall(pkgName, funcName)),
+					Suggestion: "Add sdk.WithSelector(\"#id\") or sdk.WithSelectorID(\"id\") among the arguments.",
+				})
+			}
+			if isEmptySelectorArg(call) {
+				pos := fset.Position(call.Pos())
+				results = append(results, lintResult{
+					Severity:   sevWarning,
+					File:       path,
+					Line:       pos.Line,
+					Col:        pos.Column,
+					Code:       "PATCH_SELECTOR_EMPTY",
+					Message:    fmt.Sprintf("%s() called with empty selector string — silently dropped by SDK", qualifiedCall(pkgName, funcName)),
+					Suggestion: "Pass a non-empty selector: WithSelector(\"#actual-id\").",
 				})
 			}
 		}
@@ -169,7 +216,7 @@ func isPatchFunc(name string) bool {
 
 func isSSEPkg(pkgName string, aliases map[string]bool) bool {
 	if pkgName == "" {
-		return true // unqualified call — assume SSE-related
+		return true
 	}
 	return aliases[pkgName]
 }
@@ -182,7 +229,7 @@ func isSelectorFunc(name string) bool {
 	return false
 }
 
-// --------------- Selector detection ---------------
+// --------------- Selector detection (non-RemoveElement) ---------------
 
 func hasSelectorArg(call *ast.CallExpr, sseAliases map[string]bool) bool {
 	for _, arg := range call.Args {
@@ -245,6 +292,32 @@ func isEmptySelectorArg(call *ast.CallExpr) bool {
 	return false
 }
 
+// --------------- Selector detection (RemoveElement) ---------------
+
+func hasRemoveElementSelector(call *ast.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	return strings.Trim(lit.Value, `"`) != ""
+}
+
+func isEmptyRemoveElementArg(call *ast.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	return strings.Trim(lit.Value, `"`) == ""
+}
+
+// --------------- Nil detection ---------------
+
 func isNilArg(call *ast.CallExpr) bool {
 	if len(call.Args) == 0 {
 		return false
@@ -254,4 +327,32 @@ func isNilArg(call *ast.CallExpr) bool {
 		return false
 	}
 	return ident.Name == "nil"
+}
+
+// --------------- Format validation ---------------
+
+func hasFormatMismatch(call *ast.CallExpr) bool {
+	if len(call.Args) < 2 {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	fmtStr := strings.Trim(lit.Value, "`\"")
+	verbCount := strings.Count(fmtStr, "%")
+	// Skip %% (escaped percent) and %! (error format).
+	verbCount -= strings.Count(fmtStr, "%%")
+	if verbCount <= 0 {
+		return false
+	}
+	// Count non-selector, non-option args after the format string.
+	dataArgs := 0
+	for _, arg := range call.Args[1:] {
+		if isSelectorCall(arg, nil) {
+			continue
+		}
+		dataArgs++
+	}
+	return verbCount != dataArgs
 }

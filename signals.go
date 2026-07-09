@@ -38,10 +38,11 @@ func checkJSONSignals(val string, n *html.Node, a html.Attribute, path, tag stri
 	// plausible JS object notation (contains ':').
 	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
 		if !json.Valid([]byte(trimmed)) {
-			// It's not valid JSON. Check if it looks like JS object notation.
-			// Heuristic: contains ':' (key-value pair) or a single quoted string inside.
-			// This is NOT an error in Datastar v1.0.2 — just a note for templ compatibility.
-			if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "[ ") {
+			// It's not valid JSON. Check if it looks like JS object notation
+			// (bare keys, single-quoted strings). Only warn for objects, not arrays.
+			// Arrays starting with [ that are invalid JSON are likely templ
+			// expressions or broken input, not JS object notation.
+			if trimmed[0] == '{' && strings.Contains(trimmed, ":") {
 				*results = append(*results, lintResult{
 					Severity:   sevHint,
 					File:       path,

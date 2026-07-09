@@ -30,7 +30,6 @@ func lintString(t *testing.T, cfg config, content, ext string, analyzers ...stri
 	c := cfg
 	c.root = p
 	c.recursive = false
-	c.exts = map[string]bool{ext: true}
 	active := map[string]bool{"html": true}
 	if len(analyzers) > 0 {
 		active = make(map[string]bool)
@@ -255,7 +254,7 @@ func TestRawAttrBrokenQuote(t *testing.T) {
 func TestJSONOutput(t *testing.T) {
 	p := writeTmp(t, "html", `<div data-foobar="$x"></div>`)
 	// Replicate the JSON branch by calling run + marshaling.
-	c := config{root: p, exts: map[string]bool{"html": true}}
+	c := config{root: p}
 	results := run(c, map[string]bool{"html": true})
 	if len(results) == 0 {
 		t.Fatal("expected at least one finding for data-foobar")
@@ -306,6 +305,47 @@ func TestGoEmptySelector(t *testing.T) {
 	results := lintString(t, config{}, src, "go", "go")
 	if r := hasCode(t, results, "PATCH_SELECTOR_EMPTY"); r == nil {
 		t.Errorf("expected PATCH_SELECTOR_EMPTY; got %v", codes(results))
+	}
+}
+
+func TestGoRemoveElementNoSelector(t *testing.T) {
+	// RemoveElement with NO args should flag PATCH_ELEMENTS_NO_SELECTOR.
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.RemoveElement() }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestGoRemoveElementEmpty(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.RemoveElement(\"\") }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_SELECTOR_EMPTY"); r == nil {
+		t.Errorf("expected PATCH_SELECTOR_EMPTY; got %v", codes(results))
+	}
+}
+
+func TestGoRemoveElementOK(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.RemoveElement(\"#list\") }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r != nil {
+		t.Errorf("expected no PATCH_ELEMENTS_NO_SELECTOR for RemoveElement with selector; got %v", codes(results))
+	}
+}
+
+func TestGoPatchElementfNoSelector(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElementf(s, \"<div>%s</div>\", \"x\") }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_SELECTOR; got %v", codes(results))
+	}
+}
+
+func TestGoPatchElementGostarNoSelector(t *testing.T) {
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElementGostar(s, someComponent) }"
+	results := lintString(t, config{}, src, "go", "go")
+	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r == nil {
+		t.Errorf("expected PATCH_ELEMENTS_NO_SELECTOR; got %v", codes(results))
 	}
 }
 
@@ -396,7 +436,7 @@ func TestCrossRefOrphanSelector(t *testing.T) {
 	writeFile("template.templ", htmlSrc)
 
 	// Run with both Go and HTML analyzers
-	cfg := config{root: dir, recursive: true, exts: map[string]bool{"go": true, "templ": true}}
+	cfg := config{root: dir, recursive: true}
 	results := run(cfg, map[string]bool{"go": true, "html": true})
 	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r == nil {
 		t.Errorf("expected CROSSREF_ORPHAN_SELECTOR; got %v", codes(results))
@@ -416,10 +456,51 @@ func TestCrossRefNoOrphan(t *testing.T) {
 	writeFile("handler.go", goSrc)
 	writeFile("template.templ", htmlSrc)
 
-	cfg := config{root: dir, recursive: true, exts: map[string]bool{"go": true, "templ": true}}
+	cfg := config{root: dir, recursive: true}
 	results := run(cfg, map[string]bool{"go": true, "html": true})
 	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r != nil {
 		t.Errorf("expected no CROSSREF_ORPHAN_SELECTOR when id matches; got %v", codes(results))
+	}
+}
+
+func TestCrossRefWithSelectorID(t *testing.T) {
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelectorID(\"existing-id\")) }"
+	htmlSrc := "<div id=\"existing-id\">hello</div>"
+
+	dir := t.TempDir()
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(dir+"/"+name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("handler.go", goSrc)
+	writeFile("template.templ", htmlSrc)
+
+	cfg := config{root: dir, recursive: true}
+	results := run(cfg, map[string]bool{"go": true, "html": true})
+	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r != nil {
+		t.Errorf("expected no CROSSREF_ORPHAN_SELECTOR for WithSelectorID with matching id; got %v", codes(results))
+	}
+}
+
+func TestCrossRefTemplDynamicID(t *testing.T) {
+	// Templ id={expr} should not produce orphan warnings.
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#some-dynamic-ref\")) }"
+	htmlSrc := "<div id={ .ID }>dynamic</div>"
+
+	dir := t.TempDir()
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(dir+"/"+name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("handler.go", goSrc)
+	writeFile("template.templ", htmlSrc)
+
+	cfg := config{root: dir, recursive: true}
+	results := run(cfg, map[string]bool{"go": true, "html": true})
+	if r := hasCode(t, results, "CROSSREF_ORPHAN_SELECTOR"); r != nil {
+		t.Errorf("expected no CROSSREF_ORPHAN_SELECTOR for templ with dynamic id; got %v", codes(results))
 	}
 }
 
@@ -469,35 +550,46 @@ func TestPatchElementsNoID(t *testing.T) {
 // stops firing, this test fails — protecting against silent lint loss.
 func TestAllDocumentedRules(t *testing.T) {
 	cases := []struct {
-		code    string
-		fixture string
-		ext     string
+		code     string
+		fixture  string
+		desc     string
+		ext      string
+		analyzer string // "html" (default), "go", "python", "typescript"
 	}{
-		{"BIND_NO_NAME", `<input data-bind="">`, "data-bind without signal name"},
-		{"FORM_SUBMIT_NO_PREVENT", `<form data-on:submit="@post('/x')"></form>`, "submit without __prevent"},
-		{"FORM_MISSING_ENCTYPE", `<form data-on:submit__prevent="@post('/x', { contentType: 'form' })"><input type="file" name="f"></form>`, "file input without multipart enctype"},
-		{"INDICATOR_AFTER_INIT", `<div data-init="$x=1" data-indicator="$y"></div>`, "indicator after init"},
-		{"EXPR_MISSING_DOLLAR", `<div data-text="name"></div>`, "signal name missing $"},
-		{"GET_WITH_MUTATION", `<div data-on:click="@get('/api/delete')"></div>`, "GET with mutation endpoint"},
-		{"SDK_FUNC_IN_JS", `<div data-on:click="datastar.PostSSE('/x')"></div>`, "SDK func in browser"},
-		{"USE_REDIRECT", `<div data-on:click="window.location='/x'"></div>`, "window.location redirect"},
-		{"INTERSECT_NO_ACTION", `<div data-on-intersect="true"></div>`, "intersect without action"},
-		{"PERSIST_NO_KEY", `<div data-persist></div>`, "persist without key"},
-		{"REF_EMPTY", `<div data-ref></div>`, "ref without name"},
-		{"TEXT_EMPTY", `<div data-text=""></div>`, "text empty"},
-		{"EFFECT_EMPTY", `<div data-effect=""></div>`, "effect empty"},
-		{"COMPUTED_EMPTY", `<div data-computed></div>`, "computed empty"},
-		{"SCROLL_NO_TARGET", `<div data-scroll-into-view></div>`, "scroll without target"},
-		{"ACTION_URL_FORMAT", `<div data-on:click="@get('api/x')"></div>`, "action URL not rooted"},
-		{"SCRIPT_DEFER_MISSING", `<script type="module" src="/datastar.js"></script>`, "script without defer"},
-		{"JSON_SIGNALS_NO_TERSE", `<div data-json-signals="{}"></div>`, "json-signals without terse"},
-		{"PATCH_ELEMENTS_NO_ID", `<div data-on:load="@get('/todos/stream')">no id</div>`, "SSE subscriber without id"},
+		{"BIND_NO_NAME", `<input data-bind="">`, "data-bind without signal name", "html", "html"},
+		{"FORM_SUBMIT_NO_PREVENT", `<form data-on:submit="@post('/x')"></form>`, "submit without __prevent", "html", "html"},
+		{"FORM_MISSING_ENCTYPE", `<form data-on:submit__prevent="@post('/x', { contentType: 'form' })"><input type="file" name="f"></form>`, "file input without multipart enctype", "html", "html"},
+		{"INDICATOR_AFTER_INIT", `<div data-init="$x=1" data-indicator="$y"></div>`, "indicator after init", "html", "html"},
+		{"EXPR_MISSING_DOLLAR", `<div data-text="name"></div>`, "signal name missing $", "html", "html"},
+		{"GET_WITH_MUTATION", `<div data-on:click="@get('/api/delete')"></div>`, "GET with mutation endpoint", "html", "html"},
+		{"SDK_FUNC_IN_JS", `<div data-on:click="datastar.PostSSE('/x')"></div>`, "SDK func in browser", "html", "html"},
+		{"USE_REDIRECT", `<div data-on:click="window.location='/x'"></div>`, "window.location redirect", "html", "html"},
+		{"INTERSECT_NO_ACTION", `<div data-on-intersect="true"></div>`, "intersect without action", "html", "html"},
+		{"PERSIST_NO_KEY", `<div data-persist></div>`, "persist without key", "html", "html"},
+		{"REF_EMPTY", `<div data-ref></div>`, "ref without name", "html", "html"},
+		{"TEXT_EMPTY", `<div data-text=""></div>`, "text empty", "html", "html"},
+		{"EFFECT_EMPTY", `<div data-effect=""></div>`, "effect empty", "html", "html"},
+		{"COMPUTED_EMPTY", `<div data-computed></div>`, "computed empty", "html", "html"},
+		{"SCROLL_NO_TARGET", `<div data-scroll-into-view></div>`, "scroll without target", "html", "html"},
+		{"ACTION_URL_FORMAT", `<div data-on:click="@get('api/x')"></div>`, "action URL not rooted", "html", "html"},
+		{"SCRIPT_DEFER_MISSING", `<script type="module" src="/datastar.js"></script>`, "script without defer", "html", "html"},
+		{"JSON_SIGNALS_NO_TERSE", `<div data-json-signals="{}"></div>`, "json-signals without terse", "html", "html"},
+		{"PATCH_ELEMENTS_NO_ID", `<div data-on:load="@get('/todos/stream')">no id</div>`, "SSE subscriber without id", "html", "html"},
+		// Go rules (using interpreted strings with \n for newlines)
+		{"PATCH_ELEMENTS_NO_SELECTOR", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\") }", "Go: missing selector", "go", "go"},
+		{"PATCH_SELECTOR_EMPTY", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"\")) }", "Go: empty selector", "go", "go"},
+		{"MERGE_SIGNALS_NIL", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.MarshalAndPatchSignals(nil) }", "Go: nil signals", "go", "go"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
-			results := lintString(t, config{}, tc.fixture, "html")
+			if tc.analyzer != "html" {
+				if LookupAnalyzer(tc.analyzer) == nil {
+					t.Skipf("analyzer %q not compiled", tc.analyzer)
+				}
+			}
+			results := lintString(t, config{}, tc.fixture, tc.ext, tc.analyzer)
 			if r := hasCode(t, results, tc.code); r == nil {
-				t.Errorf("%s: expected %s for %s; got %v", tc.code, tc.code, tc.ext, codes(results))
+				t.Errorf("%s: expected %s for %s; got %v", tc.code, tc.code, tc.desc, codes(results))
 			}
 		})
 	}

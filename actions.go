@@ -110,10 +110,11 @@ func checkIntersectAction(val string, n *html.Node, a html.Attribute, path, tag 
 	if actionRe.MatchString(trimmed) {
 		return
 	}
-	// If it contains a $ signal reference, it might be setting a signal — OK.
-	if strings.Contains(trimmed, "$") {
+	// If it sets a signal (assignment) or calls a function, it's valid JS.
+	if strings.Contains(trimmed, "=") || strings.Contains(trimmed, "(") {
 		return
 	}
+	// Bare $ref without action or assignment — likely not doing anything useful.
 	// If it's truly JS without an action, warn.
 	line, col := getAttrPosition(n, a)
 	*results = append(*results, lintResult{
@@ -133,7 +134,7 @@ func checkIntersectAction(val string, n *html.Node, a html.Attribute, path, tag 
 func isMutationURL(val string) bool {
 	mutationWords := []string{
 		"save", "create", "update", "delete", "remove", "submit",
-		"send", "toggle", "set", "put", "post", "patch",
+		"send", "toggle", "set", "put", "patch",
 		"register", "login", "logout", "signup", "add", "edit",
 	}
 	lower := strings.ToLower(val)

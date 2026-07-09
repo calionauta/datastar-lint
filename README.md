@@ -64,20 +64,23 @@ Exit code is `0` on clean, `1` on issues.
 
 ### Go SDK checks (always built)
 
-- **`PATCH_ELEMENTS_NO_SELECTOR`** — `sse.PatchElements()` / `sse.PatchElementTempl()` / `RenderAndPatch()` called without `WithSelector`/`WithSelectorID`. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
+- **`PATCH_ELEMENTS_NO_SELECTOR`** — `sse.PatchElements()` / `sse.PatchElementTempl()` / `sse.PatchElementf()` / `sse.PatchElementGostar()` / `RenderAndPatch()` / `sse.RemoveElement()` called without `WithSelector`/`WithSelectorID` or with empty/omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
 - **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: warning.
 - **`MERGE_SIGNALS_NIL`** — `MarshalAndPatchSignals(nil)` produces `"null"` on the wire, overwriting all signals. Severity: hint.
+- **`PATCH_ELEMENTF_FORMAT`** — `PatchElementf()` format string has `%` verbs that may not match the number of value arguments. Severity: hint.
 - **`GO_PARSE_ERROR`** — The Go file could not be parsed. Severity: error.
 
 ### Python SDK checks (build tag: `analyzer_python`)
 
 - **`PY_PATCH_NO_SELECTOR`** — `SSE.patch_elements(...)` called without `selector=` keyword. Severity: warning.
 - **`PY_PATCH_EMPTY_SELECTOR`** — `SSE.patch_elements(...)` with `selector=""` or `selector=''`. Severity: warning.
+- **`PY_REMOVE_NO_SELECTOR`** — `SSE.remove_element(...)` called with empty or missing selector argument. Severity: warning.
 
 ### TypeScript SDK checks (build tag: `analyzer_ts`)
 
 - **`TS_PATCH_NO_SELECTOR`** — `stream.patchElements(...)` or `sse.patchElements(...)` called without `selector:` in options. Severity: warning.
 - **`TS_PATCH_EMPTY_SELECTOR`** — `selector: ""` or `selector: ''`. Severity: warning.
+- **`TS_REMOVE_NO_SELECTOR`** — `stream.removeElement(...)` / `sse.removeElement(...)` called with empty or missing selector argument. Severity: warning.
 
 ### Cross-reference checks (when both `go` and `html` analyzers are active)
 

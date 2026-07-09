@@ -29,11 +29,15 @@ func checkFormSubmitMissing(n *html.Node, path, tag string, results *[]lintResul
 	}
 
 	if hasBind && !hasSubmit {
+		line, col := 0, 0
+		if _, a := getAttr(n, "data-bind"); a.Key != "" {
+			line, col = getAttrPosition(n, a)
+		}
 		*results = append(*results, lintResult{
 			Severity:   sevHint,
 			File:       path,
-			Line:       0,
-			Col:        0,
+			Line:       line,
+			Col:        col,
 			Element:    "form",
 			Code:       "FORM_SUBMIT_MISSING",
 			Message:    "<form> has data-bind inputs but no data-on:submit handler — bound data is not sent on submission",
@@ -104,11 +108,15 @@ func checkScriptDeferMissing(n *html.Node, path, tag string, results *[]lintResu
 	}
 
 	if !hasDefer {
+		line, col := 0, 0
+		if _, a := getAttr(n, "src"); a.Key != "" {
+			line, col = getAttrPosition(n, a)
+		}
 		*results = append(*results, lintResult{
 			Severity:   sevWarning,
 			File:       path,
-			Line:       0,
-			Col:        0,
+			Line:       line,
+			Col:        col,
 			Element:    "script",
 			Code:       "SCRIPT_DEFER_MISSING",
 			Message:    "Datastar script loaded without 'defer' attribute — may process DOM before it's ready",
@@ -159,11 +167,15 @@ func checkForm(n *html.Node, path string, results *[]lintResult) {
 			line, col := getAttrPosition(n, a)
 
 			// Check for __prevent modifier on data-on:submit with @post/@get.
-			if strings.HasPrefix(lower, "data-on:submit") || lower == "data-on" {
-				// Only warn if the value contains an action.
+			isSubmit := strings.HasPrefix(lower, "data-on:submit") || lower == "data-on" || strings.HasPrefix(lower, "data-on__prevent")
+			if isSubmit {
 				actionRe := regexp.MustCompile(`@(get|post|put|patch|delete)\(`)
 				if actionRe.MatchString(val) {
-					hasPrevent := strings.Contains(lower, "__prevent") || strings.Contains(val, "prevent")
+					// __prevent can be in the attribute name (data-on:submit__prevent)
+					// or in the value as {prevent: true}.
+					hasPrevent := strings.Contains(lower, "__prevent") ||
+						strings.Contains(val, "__prevent") ||
+						strings.Contains(val, "{prevent: true}")
 					if !hasPrevent {
 						*results = append(*results, lintResult{
 							Severity:   sevHint,

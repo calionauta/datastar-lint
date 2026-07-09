@@ -4,6 +4,7 @@
 //   - html   (default): lints .html, .htm, .templ files for Datastar attribute correctness
 //   - go     (stdlib):  lints .go files for missing PatchElements selectors
 //   - python (opt-in):  lints .py files for missing patch_elements selectors (build tag: analyzer_python)
+//   - typescript (opt-in): lints .ts/.tsx files for missing patchElements selectors (build tag: analyzer_ts)
 //
 // Usage:
 //
@@ -13,7 +14,6 @@
 //
 //	-r, --recursive          Walk directories recursively
 //	-a, --analyzers string   Comma-separated analyzers (default: "html")
-//	-e, --ext string         File extensions to check (default: "html,htm,templ")
 //	-s, --strict             Enable strict checks (Pro attributes, etc.)
 //	--format string          Output format: text or json
 //
@@ -35,31 +35,29 @@ import (
 type config struct {
 	root      string
 	recursive bool
-	exts      map[string]bool
 	strict    bool
 	format    string
 }
 
 func main() {
 	var cfg config
-	var extList string
 	var analyzerList string
 
 	flag.BoolVar(&cfg.recursive, "r", false, "Walk directories recursively")
 	flag.BoolVar(&cfg.recursive, "recursive", false, "Walk directories recursively")
 	flag.StringVar(&analyzerList, "a", "html", "Comma-separated analyzers")
 	flag.StringVar(&analyzerList, "analyzers", "html", "Comma-separated analyzers")
-	flag.StringVar(&extList, "e", "html,htm,templ", "Comma-separated file extensions")
-	flag.StringVar(&extList, "ext", "html,htm,templ", "Comma-separated file extensions")
 	flag.BoolVar(&cfg.strict, "s", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.BoolVar(&cfg.strict, "strict", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.StringVar(&cfg.format, "format", "text", "Output format: text or json")
-	flag.Parse()
 
-	cfg.exts = make(map[string]bool)
-	for _, ext := range strings.Split(extList, ",") {
-		cfg.exts[strings.TrimSpace(ext)] = true
-	}
+	// --ext is kept for backward compat but silently ignored — each analyzer
+	// declares its own file extensions via FileExtensions().
+	var _extDeprecated string
+	flag.StringVar(&_extDeprecated, "e", "", "Deprecated: analyzers control their own extensions")
+	flag.StringVar(&_extDeprecated, "ext", "", "Deprecated: analyzers control their own extensions")
+
+	flag.Parse()
 
 	args := flag.Args()
 	cfg.root = "."
@@ -127,8 +125,6 @@ func main() {
 }
 
 // run collects files for each active analyzer and dispatches linting.
-// When both "go" and "html" analyzers are active, it also runs cross-reference
-// checks (e.g., orphan selectors that reference non-existent template ids).
 func run(cfg config, active map[string]bool) []lintResult {
 	info, err := os.Stat(cfg.root)
 	if err != nil {
@@ -160,6 +156,11 @@ func run(cfg config, active map[string]bool) []lintResult {
 		}
 
 		if len(files) == 0 {
+			extNames := make([]string, 0, len(exts))
+			for e := range exts {
+				extNames = append(extNames, "."+e)
+			}
+			fmt.Fprintf(os.Stderr, "warning: analyzer %q found no %s files\n", a.Name(), strings.Join(extNames, ", "))
 			continue
 		}
 
