@@ -78,9 +78,8 @@ type selectorRef struct {
 //	WithSelectorf("#...", ..) → id (first format arg), WithSelectorf
 var goSelectorRE = regexp.MustCompile(
 	`(\w+\.)?(WithSelector|WithSelectorID|WithSelectorf|RemoveElement)` +
-		`\(` +
-		`"#?([^"]+)"` +
-		`|'#?([^']+)'`,
+		`\(\s*` +
+		`"#?([^"]+)"`,
 )
 
 func collectGoSelectors(files []string) []selectorRef {
@@ -99,9 +98,6 @@ func collectGoSelectors(files []string) []selectorRef {
 			pkg := matches[1]
 			funcName := matches[2]
 			id := matches[3]
-			if id == "" {
-				id = matches[4]
-			}
 			if id == "" {
 				continue
 			}
