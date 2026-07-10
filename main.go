@@ -34,7 +34,7 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.7.0"
+var version = "0.7.1"
 
 type config struct {
 	root       string
