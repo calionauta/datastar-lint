@@ -199,6 +199,43 @@ func TestCleanFile(t *testing.T) {
 	}
 }
 
+func TestOnlyErrors(t *testing.T) {
+	// Fixture that triggers errors + warnings + hints.
+	content := `<div data-on:load="@get('/todos')">load never fires</div>` +
+		`<div data-foobar="$x"></div>`
+
+	t.Run("fixture has both severities", func(t *testing.T) {
+		results := lintString(t, config{}, content, "html")
+		hasError, hasNonError := false, false
+		for _, r := range results {
+			if r.Severity == sevError {
+				hasError = true
+			} else {
+				hasNonError = true
+			}
+		}
+		if !hasError {
+			t.Error("expected at least one ERROR result")
+		}
+		if !hasNonError {
+			t.Error("expected at least one non-ERROR result to test filtering")
+		}
+	})
+
+	t.Run("only-errors filters warnings and hints", func(t *testing.T) {
+		results := run(config{root: writeTmp(t, "html", content)}, map[string]bool{"html": true})
+		filtered := filterOnlyErrors(results)
+		for _, r := range filtered {
+			if r.Severity != sevError {
+				t.Errorf("expected only ERROR after filtering, got %s: %s", r.Severity, r.Code)
+			}
+		}
+		if len(filtered) == 0 {
+			t.Error("expected at least one ERROR result after filtering")
+		}
+	})
+}
+
 // TestRawAttrBrokenQuote exercises the raw-source scan that detects unescaped
 // single quotes inside single-quoted attributes (the parser mangles these, so
 // the parsed value never contains the offending quote). This is the core of
@@ -735,6 +772,157 @@ func TestPatchElementsNoID(t *testing.T) {
 	}
 }
 
+func TestOnLoadNoEvent(t *testing.T) {
+	// Bad: data-on:load on a div — load never fires on div.
+	results := lintString(t, config{}, `<div data-on:load="@get('/stream')">content</div>`, "html")
+	r := hasCode(t, results, "ON_LOAD_NO_EVENT")
+	if r == nil {
+		t.Errorf("expected ON_LOAD_NO_EVENT for div with data-on:load; got %v", codes(results))
+	} else if r.Severity != sevError {
+		t.Errorf("ON_LOAD_NO_EVENT should be ERROR, got %v", r.Severity)
+	}
+
+	// Bad: data-on:load on a span.
+	results = lintString(t, config{}, `<span data-on:load="$x = 1">content</span>`, "html")
+	if r := hasCode(t, results, "ON_LOAD_NO_EVENT"); r == nil {
+		t.Errorf("expected ON_LOAD_NO_EVENT for span; got %v", codes(results))
+	}
+
+	// OK: data-on:load on body — body fires 'load'.
+	results = lintString(t, config{}, `<body data-on:load="$x = 1"></body>`, "html")
+	if r := hasCode(t, results, "ON_LOAD_NO_EVENT"); r != nil {
+		t.Errorf("body should not flag ON_LOAD_NO_EVENT; got %v", codes(results))
+	}
+
+	// OK: data-on:load with __window modifier — window fires 'load'.
+	results = lintString(t, config{}, `<div data-on:load__window="@get('/x')">content</div>`, "html")
+	if r := hasCode(t, results, "ON_LOAD_NO_EVENT"); r != nil {
+		t.Errorf("data-on:load__window should not flag ON_LOAD_NO_EVENT; got %v", codes(results))
+	}
+
+	// OK: data-on:load on img — img fires 'load'.
+	results = lintString(t, config{}, `<img data-on:load="$x = 1" src="foo.jpg" />`, "html")
+	if r := hasCode(t, results, "ON_LOAD_NO_EVENT"); r != nil {
+		t.Errorf("img should not flag ON_LOAD_NO_EVENT; got %v", codes(results))
+	}
+
+	// OK: data-on:load on script — script fires 'load'.
+	results = lintString(t, config{}, `<script data-on:load="$x = 1" src="/app.js"></script>`, "html")
+	if r := hasCode(t, results, "ON_LOAD_NO_EVENT"); r != nil {
+		t.Errorf("script should not flag ON_LOAD_NO_EVENT; got %v", codes(results))
+	}
+}
+
+func TestOnDOMContentLoadedNoEvent(t *testing.T) {
+	// Bad: data-on:DOMContentLoaded on any element — fires on document, not elements.
+	results := lintString(t, config{}, `<div data-on:DOMContentLoaded="$x = 1">content</div>`, "html")
+	r := hasCode(t, results, "ON_DOM_CONTENT_LOADED_NO_EVENT")
+	if r == nil {
+		t.Errorf("expected ON_DOM_CONTENT_LOADED_NO_EVENT for data-on:DOMContentLoaded; got %v", codes(results))
+	} else if r.Severity != sevError {
+		t.Errorf("ON_DOM_CONTENT_LOADED_NO_EVENT should be ERROR, got %v", r.Severity)
+	}
+
+	// Bad: on body too.
+	results = lintString(t, config{}, `<body data-on:DOMContentLoaded="$x = 1"></body>`, "html")
+	if r := hasCode(t, results, "ON_DOM_CONTENT_LOADED_NO_EVENT"); r == nil {
+		t.Errorf("expected ON_DOM_CONTENT_LOADED_NO_EVENT on body too; got %v", codes(results))
+	}
+
+	// OK: data-on:DOMContentLoaded with __document modifier (document fires DOMContentLoaded).
+	results = lintString(t, config{}, `<div data-on:DOMContentLoaded__document="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_DOM_CONTENT_LOADED_NO_EVENT"); r != nil {
+		t.Errorf("data-on:DOMContentLoaded__document should not flag; got %v", codes(results))
+	}
+
+	// OK: data-on:DOMContentLoaded with __window modifier (window also fires DOMContentLoaded).
+	results = lintString(t, config{}, `<div data-on:DOMContentLoaded__window="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_DOM_CONTENT_LOADED_NO_EVENT"); r != nil {
+		t.Errorf("data-on:DOMContentLoaded__window should not flag; got %v", codes(results))
+	}
+
+	// OK: data-init is correct.
+	results = lintString(t, config{}, `<div data-init="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_DOM_CONTENT_LOADED_NO_EVENT"); r != nil {
+		t.Errorf("data-init should not flag ON_DOM_CONTENT_LOADED_NO_EVENT; got %v", codes(results))
+	}
+}
+
+func TestOnHashchangeNoEvent(t *testing.T) {
+	// Bad: data-on:hashchange on any element — only fires on window.
+	results := lintString(t, config{}, `<div data-on:hashchange="$x = 1">content</div>`, "html")
+	r := hasCode(t, results, "ON_HASHCHANGE_NO_EVENT")
+	if r == nil {
+		t.Errorf("expected ON_HASHCHANGE_NO_EVENT for data-on:hashchange; got %v", codes(results))
+	} else if r.Severity != sevError {
+		t.Errorf("ON_HASHCHANGE_NO_EVENT should be ERROR, got %v", r.Severity)
+	}
+
+	// OK: data-on:hashchange with __window modifier.
+	results = lintString(t, config{}, `<div data-on:hashchange__window="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_HASHCHANGE_NO_EVENT"); r != nil {
+		t.Errorf("data-on:hashchange__window should not flag; got %v", codes(results))
+	}
+
+	// OK: data-init is correct.
+	results = lintString(t, config{}, `<div data-init="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_HASHCHANGE_NO_EVENT"); r != nil {
+		t.Errorf("data-init should not flag ON_HASHCHANGE_NO_EVENT; got %v", codes(results))
+	}
+}
+
+func TestOnResizeNoEvent(t *testing.T) {
+	// Bad: data-on:resize on any element — resize only fires on window.
+	results := lintString(t, config{}, `<div data-on:resize="$x = 1">content</div>`, "html")
+	r := hasCode(t, results, "ON_RESIZE_NO_EVENT")
+	if r == nil {
+		t.Errorf("expected ON_RESIZE_NO_EVENT for data-on:resize; got %v", codes(results))
+	} else if r.Severity != sevError {
+		t.Errorf("ON_RESIZE_NO_EVENT should be ERROR, got %v", r.Severity)
+	}
+
+	// Bad: on body too (resize doesn't fire on body).
+	results = lintString(t, config{}, `<body data-on:resize="$x = 1"></body>`, "html")
+	if r := hasCode(t, results, "ON_RESIZE_NO_EVENT"); r == nil {
+		t.Errorf("expected ON_RESIZE_NO_EVENT on body too; got %v", codes(results))
+	}
+
+	// OK: data-on:resize with __window modifier.
+	results = lintString(t, config{}, `<div data-on:resize__window="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_RESIZE_NO_EVENT"); r != nil {
+		t.Errorf("data-on:resize__window should not flag; got %v", codes(results))
+	}
+
+	// OK: data-init is correct.
+	results = lintString(t, config{}, `<div data-init="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_RESIZE_NO_EVENT"); r != nil {
+		t.Errorf("data-init should not flag ON_RESIZE_NO_EVENT; got %v", codes(results))
+	}
+}
+
+func TestOnInitNoEvent(t *testing.T) {
+	// Bad: data-on:init on any element — 'init' is not a browser event.
+	results := lintString(t, config{}, `<div data-on:init="$x = 1">content</div>`, "html")
+	r := hasCode(t, results, "ON_INIT_NO_EVENT")
+	if r == nil {
+		t.Errorf("expected ON_INIT_NO_EVENT for data-on:init; got %v", codes(results))
+	} else if r.Severity != sevError {
+		t.Errorf("ON_INIT_NO_EVENT should be ERROR, got %v", r.Severity)
+	}
+
+	// Bad: data-on:init on body too.
+	results = lintString(t, config{}, `<body data-on:init="$x = 1"></body>`, "html")
+	if r := hasCode(t, results, "ON_INIT_NO_EVENT"); r == nil {
+		t.Errorf("expected ON_INIT_NO_EVENT on body too; got %v", codes(results))
+	}
+
+	// OK: data-init (no colon) is correct.
+	results = lintString(t, config{}, `<div data-init="$x = 1">content</div>`, "html")
+	if r := hasCode(t, results, "ON_INIT_NO_EVENT"); r != nil {
+		t.Errorf("data-init should not flag ON_INIT_NO_EVENT; got %v", codes(results))
+	}
+}
+
 // TestAllDocumentedRules is a regression net: each Datastar rule listed in the
 // README must fire on a minimal fixture. If a rule is renamed, removed, or
 // stops firing, this test fails — protecting against silent lint loss.
@@ -765,6 +953,11 @@ func TestAllDocumentedRules(t *testing.T) {
 		{"SCRIPT_DEFER_MISSING", `<script type="module" src="/datastar.js"></script>`, "script without defer", "html", "html"},
 		{"JSON_SIGNALS_NO_TERSE", `<div data-json-signals="{}"></div>`, "json-signals without terse", "html", "html"},
 		{"PATCH_ELEMENTS_NO_ID", `<div data-on:load="@get('/todos/stream')">no id</div>`, "SSE subscriber without id", "html", "html"},
+		{"ON_LOAD_NO_EVENT", `<div data-on:load="$x = 1">content</div>`, "data-on:load on non-loading element", "html", "html"},
+		{"ON_INIT_NO_EVENT", `<div data-on:init="$x = 1">content</div>`, "data-on:init (no such event)", "html", "html"},
+		{"ON_DOM_CONTENT_LOADED_NO_EVENT", `<div data-on:DOMContentLoaded="$x = 1">content</div>`, "data-on:DOMContentLoaded (fires on document only)", "html", "html"},
+		{"ON_RESIZE_NO_EVENT", `<div data-on:resize="$x = 1">content</div>`, "data-on:resize (fires on window only)", "html", "html"},
+		{"ON_HASHCHANGE_NO_EVENT", `<div data-on:hashchange="$x = 1">content</div>`, "data-on:hashchange (fires on window only)", "html", "html"},
 		// Go rules (using interpreted strings with \n for newlines)
 		{"PATCH_ELEMENTS_NO_SELECTOR", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\") }", "Go: missing selector", "go", "go"},
 		{"PATCH_SELECTOR_EMPTY", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"\")) }", "Go: empty selector", "go", "go"},

@@ -7,5 +7,10 @@
     <div data-show:foo="$x"></div>
     <div data-signals='{"name": "o'brien"}'></div>
     <div data-signals="{'name': \"o'brien\"}"></div>
+    <div data-on:load="@get('/todos')">no load event here</div>
+    <div data-on:init="$x = 1">init event does not exist</div>
+    <div data-on:DOMContentLoaded="$x = 1">DOMContentLoaded fires on document, not elements</div>
+    <div data-on:resize="$x = 1">resize only fires on window</div>
+    <div data-on:hashchange="$x = 1">hashchange only fires on window</div>
   </body>
 </html>

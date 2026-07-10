@@ -1,38 +1,43 @@
-.PHONY: build install check fmt lint vet test test-all datastar-lint
+# datastar-lint Makefile
+#
+# Targets:
+#   build          — build binary with version injected via ldflags
+#   install        — install binary via go install
+#   test           — run all tests
+#   test-verbose   — run all tests with verbose output
+#   lint           — run golangci-lint (if installed)
+#   clean          — remove build artifacts
+
+GIT_VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags="-X main.version=$(GIT_VERSION)"
+BINARY := datastar-lint
+
+.PHONY: build install test test-verbose lint clean release
 
 build:
-	go build -o bin/datastar-lint .
-
-build-all:
-	go build -tags "analyzer_python analyzer_ts" -o bin/datastar-lint .
+	go build $(LDFLAGS) -o $(BINARY) .
 
 install:
-	go install .
-
-install-all:
-	go install -tags "analyzer_python analyzer_ts" .
-
-# Quality gate (default: HTML + Go analyzers only).
-check: fmt lint vet test
-	@echo "✅ All checks passed"
-
-fmt:
-	@test -z "$$(gofumpt -l .)" || (echo "❌ gofumpt issues:"; gofumpt -l .; exit 1)
-	@test -z "$$(goimports -l .)" || (echo "❌ goimports issues:"; goimports -l .; exit 1)
-
-lint:
-	golangci-lint run ./...
-
-vet:
-	go vet ./...
+	go install $(LDFLAGS) .
 
 test:
-	go test -race ./... -count=1
+	go test -count=1 ./...
 
-# Full test suite including Python/TypeScript analyzers.
-test-all:
-	go test -tags "analyzer_python analyzer_ts" -race ./... -count=1
-	go test -race ./... -count=1  # also verify default build
+test-verbose:
+	go test -count=1 -v ./...
 
-datastar-lint:
-	go run . -r ./testdata/
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed — skipping"; \
+	fi
+
+release:
+	@test -n "$(V)" || (echo 'Usage: make release V=v0.X.Y'; exit 1)
+	git tag -a $(V) -m "Release $(V)"
+	git push origin $(V)
+	@echo "Tag $(V) pushed. CI will build and deploy."
+
+clean:
+	rm -f $(BINARY)

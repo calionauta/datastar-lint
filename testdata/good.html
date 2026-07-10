@@ -2,6 +2,13 @@
 <html>
   <body>
     <div data-show="$open" data-on:click="@post('/x')"></div>
+<div data-init="@get('/todos')">correct: use data-init instead of data-on:load</div>
+<div data-on:load__window="@get('/x')">window fires load</div>
+<img data-on:load="$loaded = true" src="pic.jpg" />
+<div data-on:DOMContentLoaded__document="$x = 1">document fires DOMContentLoaded</div>
+<div data-on:resize__window="$x = 1">window fires resize</div>
+<div data-on:hashchange__window="$x = 1">window fires hashchange</div>
+
     <dialog class="modal" data-class='{"modal-open": $open}'>m</dialog>
     <form data-on:submit="@post('/save')">
       <input data-bind="name" name="name" />

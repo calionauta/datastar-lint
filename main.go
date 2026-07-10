@@ -30,13 +30,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
+// version is set at build time via ldflags or defaults to the latest tagged release.
+var version = "0.7.0"
+
 type config struct {
-	root      string
-	recursive bool
-	strict    bool
-	format    string
+	root       string
+	recursive  bool
+	strict     bool
+	format     string
+	verbose    bool
+	onlyErrors bool
 }
 
 func main() {
@@ -57,7 +63,17 @@ func main() {
 	flag.StringVar(&_extDeprecated, "e", "", "Deprecated: analyzers control their own extensions")
 	flag.StringVar(&_extDeprecated, "ext", "", "Deprecated: analyzers control their own extensions")
 
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "Show version and exit")
+	flag.BoolVar(&cfg.verbose, "verbose", false, "Verbose debug output")
+	flag.BoolVar(&cfg.onlyErrors, "only-errors", false, "Only show errors (hide warnings and hints)")
+
 	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("datastar-lint v%s\n", version)
+		os.Exit(0)
+	}
 
 	args := flag.Args()
 	cfg.root = "."
@@ -65,8 +81,31 @@ func main() {
 		cfg.root = args[0]
 	}
 
+	if cfg.verbose {
+		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)
+	}
+
 	activeAnalyzers := parseAnalyzerFlag(analyzerList)
+	start := time.Now()
 	results := run(cfg, activeAnalyzers)
+	elapsed := time.Since(start)
+
+	if cfg.verbose {
+		fmt.Fprintf(os.Stderr, "debug: %d result(s) in %v\n", len(results), elapsed.Round(time.Millisecond))
+		// Summarize counts by severity.
+		var errors, warns, hints int
+		for _, r := range results {
+			switch r.Severity {
+			case sevError:
+				errors++
+			case sevWarning:
+				warns++
+			case sevHint:
+				hints++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "debug:   errors=%d  warnings=%d  hints=%d\n", errors, warns, hints)
+	}
 
 	sort.SliceStable(results, func(i, j int) bool {
 		a, b := results[i], results[j]
@@ -93,6 +132,10 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if cfg.onlyErrors {
+		results = filterOnlyErrors(results)
 	}
 
 	if len(results) == 0 {
@@ -164,6 +207,10 @@ func run(cfg config, active map[string]bool) []lintResult {
 			continue
 		}
 
+		if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "debug:   analyzer %q: %d file(s)\n", a.Name(), len(files))
+		}
+
 		for _, f := range files {
 			r := a.Lint(f, cfg)
 			all = append(all, r...)
@@ -190,6 +237,16 @@ func countErrors(results []lintResult) int {
 		}
 	}
 	return n
+}
+
+func filterOnlyErrors(results []lintResult) []lintResult {
+	var filtered []lintResult
+	for _, r := range results {
+		if r.Severity == sevError {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 func collectFiles(root string, recursive bool, exts map[string]bool) []string {

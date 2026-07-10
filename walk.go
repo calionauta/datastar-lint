@@ -10,6 +10,9 @@ import (
 )
 
 func lintFile(path string, cfg config) []lintResult {
+	if cfg.verbose {
+		fmt.Fprintf(os.Stderr, "debug: linting %s\n", path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return []lintResult{{
@@ -315,6 +318,76 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 			checkUnescapedSingleQuotes(val, name, n, a, path, tag, results)
 		}
 	case "data-on":
+		// Check data-on:load on non-loading elements (div, span, etc. never fire 'load').
+		if attrKey == "load" && !isLoadingElement(tag) && !hasModifier(modifiers, "window") {
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  name,
+				Code:       "ON_LOAD_NO_EVENT",
+				Message:    fmt.Sprintf("data-on:load on <%s> — the 'load' event never fires on this element, the callback will silently never run", tag),
+				Suggestion: "Use data-init (which runs immediately on DOM processing) instead of data-on:load. If the intent is a server round-trip, use data-init=\"@get('/endpoint')\" or add __window modifier: data-on:load__window (the window does fire 'load').",
+			})
+		}
+		// Check data-on:init — 'init' is not a browser event; no element fires it.
+		if attrKey == "init" {
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  name,
+				Code:       "ON_INIT_NO_EVENT",
+				Message:    fmt.Sprintf("data-on:init on <%s> — the browser has no 'init' event, the callback will never run", tag),
+				Suggestion: "Use data-init (without the colon) instead: data-init=\"$x = 1\" which runs immediately when the element is processed by Datastar.",
+			})
+		}
+		// Check data-on:DOMContentLoaded — fires on document, not elements.
+		if attrKey == "domcontentloaded" && !hasModifier(modifiers, "document") && !hasModifier(modifiers, "window") {
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  name,
+				Code:       "ON_DOM_CONTENT_LOADED_NO_EVENT",
+				Message:    fmt.Sprintf("data-on:DOMContentLoaded on <%s> — the DOMContentLoaded event fires on document, not on individual elements, the callback will silently never run", tag),
+				Suggestion: "Use data-init (which runs immediately on DOM processing) instead of data-on:DOMContentLoaded, or add __document modifier: data-on:DOMContentLoaded__document (document does fire DOMContentLoaded).",
+			})
+		}
+		// Check data-on:hashchange — fires only on window, never on elements.
+		if attrKey == "hashchange" && !hasModifier(modifiers, "window") {
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  name,
+				Code:       "ON_HASHCHANGE_NO_EVENT",
+				Message:    fmt.Sprintf("data-on:hashchange on <%s> — the 'hashchange' event only fires on window, not on individual elements; the callback will silently never run", tag),
+				Suggestion: "Add __window modifier: data-on:hashchange__window (window does fire 'hashchange').",
+			})
+		}
+		// Check data-on:resize — fires only on window, never on elements.
+		if attrKey == "resize" && !hasModifier(modifiers, "window") {
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  name,
+				Code:       "ON_RESIZE_NO_EVENT",
+				Message:    fmt.Sprintf("data-on:resize on <%s> — the 'resize' event only fires on window, not on individual elements; the callback will silently never run", tag),
+				Suggestion: "Use data-init or a ResizeObserver instead of data-on:resize on an element, or add __window modifier: data-on:resize__window (window does fire 'resize').",
+			})
+		}
 		checkActions(val, n, a, path, tag, results)
 	case "data-on-intersect":
 		checkIntersectAction(val, n, a, path, tag, results)
@@ -461,3 +534,16 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 // Heuristics: value is only "{" (mangled by parser), contains "map[string]",
 // "interface{}", "fmt.Sprintf", "SafeJSON", "JSONString", "func()", or Go keywords.
 var goExprRe = regexp.MustCompile(`map\[string\]|interface\{\}|fmt\.Sprintf|SafeJSON|JSONString|func\(\)`)
+
+// isLoadingElement returns true for HTML elements that fire the native DOM
+// 'load' event. All other elements (div, span, section, etc.) never fire
+// 'load', so data-on:load on them silently does nothing.
+func isLoadingElement(tag string) bool {
+	switch tag {
+	case "body", "frameset", "iframe", "img", "image", "script",
+		"link", "style", "video", "audio", "track",
+		"object", "embed", "source", "picture":
+		return true
+	}
+	return false
+}

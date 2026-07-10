@@ -4,6 +4,8 @@ A multi-language linter for [Datastar](https://data-star.dev). Validates HTML at
 
 Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`PatchSignals` calls on the backend. This tool catches typos, missing selectors, and misconfigurations at build time — not in the browser console.
 
+> **Version compatibility**: Tested against Datastar **v1.x**. The rules check stable DOM-level and Datastar-API-level patterns. Minor/patch releases of Datastar (Y.Z) should not affect correctness. For major releases, an audit will be published alongside the linter update. Run `datastar-lint --version` to see the linter version.
+
 ## Install
 
 ```bash
@@ -61,6 +63,11 @@ Exit code is `0` on clean, `1` on issues.
 - **`PRO_ATTR`** — Datastar Pro-only attributes. Warning by default, error in strict mode.
 - **`FOREIGN_ATTR`** — Alpine.js/Vue.js leftovers (`x-data`, `v-if`, `@click`).
 - **`PATCH_ELEMENTS_NO_ID`** — Element with `data-on:load` (SSE) or `data-on-signal-patch` but no `id`. The JS client needs an `#id` anchor to morph the fragment.
+- **`ON_LOAD_NO_EVENT`** — `data-on:load` on an element that never fires the native `load` event (`<div>`, `<span>`, etc.). The native `load` event only fires on `<body>`, `<img>`, `<script>`, `<link>`, `<video>`, and other elements with external resource loading. On all other elements the callback silently never executes. Use `data-init` instead, or add the `__window` modifier. Severity: error.
+- **`ON_INIT_NO_EVENT`** — `data-on:init` used anywhere — there is no `init` event in the browser DOM spec. Use `data-init` (without colon) instead, which runs immediately when the element is processed by Datastar. Severity: error.
+- **`ON_DOM_CONTENT_LOADED_NO_EVENT`** — `data-on:DOMContentLoaded` on any element — the `DOMContentLoaded` event fires on `document`, not on individual elements, so the callback silently never runs. Use `data-init` instead, or add the `__document` modifier. Severity: error.
+- **`ON_RESIZE_NO_EVENT`** — `data-on:resize` on any element — the native `resize` event only fires on `window`, not on individual elements. For element-level resize observation, use `ResizeObserver` instead. Or add the `__window` modifier. Severity: error.
+- **`ON_HASHCHANGE_NO_EVENT`** — `data-on:hashchange` on any element — the `hashchange` event only fires on `window`, not on individual elements. Use `data-on:hashchange__window` instead. Severity: error.
 
 ### Go SDK checks (always built)
 
