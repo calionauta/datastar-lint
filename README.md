@@ -4,7 +4,7 @@ A multi-language linter for [Datastar](https://data-star.dev). Validates HTML at
 
 Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`PatchSignals` calls on the backend. This tool catches typos, missing selectors, and misconfigurations at build time — not in the browser console.
 
-> **Version compatibility**: Tested against Datastar **v1.x**. The rules check stable DOM-level and Datastar-API-level patterns. Minor/patch releases of Datastar (Y.Z) should not affect correctness. For major releases, an audit will be published alongside the linter update. Run `datastar-lint --version` to see the linter version.
+> **Version compatibility**: Tested against Datastar **v1.x**. The rules check stable DOM-level and Datastar-API-level patterns, and the full rule set is covered by automated tests that run in CI on every push. Minor/patch releases of Datastar (Y.Z) should not affect correctness. Run `datastar-lint --version` to see the linter version.
 
 ## Contents
 
