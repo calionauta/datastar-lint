@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,9 +76,11 @@ func TestArchiveSuffix(t *testing.T) {
 	if !strings.HasPrefix(suffix, "_") {
 		t.Errorf("archiveSuffix should start with underscore, got %q", suffix)
 	}
-	parts := strings.Split(suffix, "_")
-	if len(parts) != 3 {
-		t.Errorf("archiveSuffix should have 3 underscore-delimited parts, got %q", suffix)
+	if !strings.Contains(suffix, runtime.GOOS) && !strings.Contains(suffix, "macOS") && !strings.Contains(suffix, "linux") {
+		t.Errorf("archiveSuffix should contain OS name, got %q", suffix)
+	}
+	if !strings.Contains(suffix, runtime.GOARCH) {
+		t.Errorf("archiveSuffix should contain arch name, got %q", suffix)
 	}
 }
 
@@ -248,6 +251,7 @@ func TestSelfUpdate_Success(t *testing.T) {
 	archive := buildTarGz(t, content)
 
 	var downloadURL string
+	suff := archiveSuffix()
 	apiCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiCalls++
@@ -255,7 +259,7 @@ func TestSelfUpdate_Success(t *testing.T) {
 			resp := ghRelease{
 				TagName: "v9.9.9",
 				Assets: []ghAsset{
-					{Name: "datastar-lint_v9.9.9_macOS_arm64.tar.gz", BrowserDownloadURL: downloadURL},
+					{Name: "datastar-lint_v9.9.9" + suff + ".tar.gz", BrowserDownloadURL: downloadURL},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -315,7 +319,7 @@ func TestSelfUpdate_NoMatchingAsset(t *testing.T) {
 		resp := ghRelease{
 			TagName: "v9.9.9",
 			Assets: []ghAsset{
-				{Name: "datastar-lint_v9.9.9_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/linux.tar.gz"},
+				{Name: "datastar-lint_v9.9.9_nonexistent_platform.tar.gz", BrowserDownloadURL: "https://example.com/nope.tar.gz"},
 			},
 		}
 		json.NewEncoder(w).Encode(resp)
