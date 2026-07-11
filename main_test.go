@@ -199,6 +199,12 @@ func TestCleanFile(t *testing.T) {
 	}
 }
 
+func TestVersionConstant(t *testing.T) {
+	if version == "" {
+		t.Error("version should not be empty")
+	}
+}
+
 func TestOnlyErrors(t *testing.T) {
 	// Fixture that triggers errors + warnings + hints.
 	content := `<div data-on:load="@get('/todos')">load never fires</div>` +

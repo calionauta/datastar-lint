@@ -34,7 +34,11 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.7.1"
+var version = "0.8.0"
+
+// updateCheckTimeout is the HTTP timeout used for the automatic version
+// check on startup (kept short so linting is never delayed).
+const updateCheckTimeout = 2 * time.Second
 
 type config struct {
 	root       string
@@ -63,16 +67,37 @@ func main() {
 	flag.StringVar(&_extDeprecated, "e", "", "Deprecated: analyzers control their own extensions")
 	flag.StringVar(&_extDeprecated, "ext", "", "Deprecated: analyzers control their own extensions")
 
-	var showVersion bool
+	var (
+		showVersion  bool
+		runUpdate    bool
+		checkUpdate  bool
+	)
 	flag.BoolVar(&showVersion, "version", false, "Show version and exit")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "Verbose debug output")
 	flag.BoolVar(&cfg.onlyErrors, "only-errors", false, "Only show errors (hide warnings and hints)")
+	flag.BoolVar(&runUpdate, "update", false, "Update datastar-lint to the latest version and exit")
+	flag.BoolVar(&checkUpdate, "check-update", false, "Check for a newer version without running lint")
 
 	flag.Parse()
 
-	if showVersion {
+	switch {
+	case showVersion:
 		fmt.Printf("datastar-lint v%s\n", version)
 		os.Exit(0)
+	case runUpdate:
+		if err := SelfUpdate(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case checkUpdate:
+		msg := CheckForUpdate(10 * time.Second)
+		if msg != "" {
+			fmt.Print(msg)
+		} else {
+			fmt.Printf("datastar-lint v%s is up to date.\n", version)
+		}
+		return
 	}
 
 	args := flag.Args()
@@ -83,6 +108,25 @@ func main() {
 
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)
+	}
+
+	// Check for newer version in a goroutine so linting is never blocked.
+	updateCh := make(chan string, 1)
+	go func() {
+		updateCh <- CheckForUpdate(updateCheckTimeout)
+	}()
+
+	// drainUpdate prints any pending update message to stderr.
+	// Must be called before os.Exit or return since defer does not
+	// run before os.Exit.
+	drainUpdate := func() {
+		select {
+		case msg := <-updateCh:
+			if msg != "" {
+				fmt.Fprint(os.Stderr, msg)
+			}
+		default:
+		}
 	}
 
 	activeAnalyzers := parseAnalyzerFlag(analyzerList)
@@ -125,12 +169,15 @@ func main() {
 		out, err := json.MarshalIndent(results, "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			drainUpdate()
 			os.Exit(1)
 		}
 		fmt.Println(string(out))
 		if countErrors(results) > 0 {
+			drainUpdate()
 			os.Exit(1)
 		}
+		drainUpdate()
 		return
 	}
 
@@ -139,6 +186,7 @@ func main() {
 	}
 
 	if len(results) == 0 {
+		drainUpdate()
 		fmt.Println("✓ No Datastar issues found.")
 		return
 	}
@@ -163,8 +211,10 @@ func main() {
 	errCount := countErrors(results)
 	if errCount > 0 {
 		fmt.Printf("❌ %d error(s) found.\n", errCount)
+		drainUpdate()
 		os.Exit(1)
 	}
+	drainUpdate()
 }
 
 // run collects files for each active analyzer and dispatches linting.

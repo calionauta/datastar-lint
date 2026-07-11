@@ -53,6 +53,13 @@ Exit code is `0` on clean, `1` on issues.
 | Python | `python` | `.py` | `analyzer_python` | Python (regex) |
 | TypeScript | `typescript` | `.ts`, `.tsx` | `analyzer_ts` | TypeScript/JavaScript (regex) |
 
+### Update flags
+
+- **`--check-update`** — Check if a newer version is available on GitHub without running lint.
+- **`--update`** — Download and atomically replace the current binary with the latest release. Requires write access to the executable directory.
+
+On every run, `datastar-lint` silently checks for a newer version (with a 2 second timeout). If found, a notice is printed to stderr before the lint output. Use `--update` to apply it.
+
 ## What it catches
 
 ### HTML attributes & typos (all languages)
