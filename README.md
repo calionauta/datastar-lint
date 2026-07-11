@@ -48,9 +48,9 @@ Exit code is `0` on clean, `1` on issues.
 
 | Analyzer | Flag name | Extensions | Build tag | Language |
 |----------|-----------|------------|-----------|----------|
-| HTML | `html` | `.html`, `.htm`, `.templ`, `.tsx`, `.jsx`, `.ts`, `.js` | _(default)_ | All — Templ (Go), Jinja (Python), ERB (Ruby), JSX/TSX (TS/JS), plain HTML |
-| Go | `go` | `.go` | _(default)_ | Go (stdlib `go/parser`) |
-| Python | `python` | `.py` | `analyzer_python` | Python (regex) |
+| HTML | `html` | `.html`, `.htm`, `.templ`, `.tsx`, `.jsx`, `.ts`, `.js` | _(enabled by default)_ | All — Templ (Go), JSX/TSX (TS/JS), plain HTML |
+| Go | `go` | `.go` | _(no build tag)_ | Go (stdlib `go/parser`) |
+| Python | `python` | `.py` | `analyzer_python` | Python (regex, SDK calls) |
 | TypeScript | `typescript` | `.ts`, `.tsx` | `analyzer_ts` | TypeScript/JavaScript (regex, SDK calls) |
 
 > **Why `.templ` (and `.ts`/`.tsx`) are listed under HTML:** `.templ` is Go's
@@ -105,7 +105,7 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 
 ### Cross-reference checks (when both `go` and `html` analyzers are active)
 
-- **`CROSSREF_ORPHAN_SELECTOR`** — A Go `WithSelector("#id")` references an element id that doesn't exist in any scanned `.templ`/`.html` file. Severity: warning.
+- **`CROSSREF_ORPHAN_SELECTOR`** — A Go `WithSelector("#id")` references an element id that doesn't exist in any scanned `.templ`/`.html`/`.tsx`/`.jsx`/`.ts`/`.js` file. Severity: warning.
 
 ### Forms
 
@@ -154,21 +154,36 @@ To add a new language, create a file implementing `Analyzer`, call `RegisterAnal
 
 datastar-lint catches mistakes that language compilers and browsers ignore
 (see [Why datastar-lint](#why-datastar-lint)). Run it wherever you produce or
-change Datastar output:
+change Datastar output.
+
+### Analyzer enablement
+
+Only the **HTML** analyzer runs by default. Enable the others explicitly with
+`--analyzers` (comma-separated). Go needs no build tag; Python and TypeScript
+must be compiled in first:
+
+| Analyzer | Runs by default? | To enable |
+|----------|------------------|-----------|
+| `html` | Yes | — (always on) |
+| `go` | No | `--analyzers ...,go` (no build tag needed) |
+| `python` | No | build with `-tags analyzer_python`, then `--analyzers ...,python` |
+| `typescript` | No | build with `-tags analyzer_ts`, then `--analyzers ...,typescript` |
+
+### When to run
 
 | When | Command | Why |
 |------|---------|-----|
-| **After `templ generate`** | `templ generate && datastar-lint -r ./features/` | Templ emits `.templ`/`.html` — lint the generated attributes |
-| **Before commit** | `datastar-lint -r ./` | Gate on every change across all enabled analyzers |
-| **In CI** | `datastar-lint -r ./` | PR gate; cross-reference needs both `go` + `html` |
+| **After `templ generate`** | `templ generate && datastar-lint -r --analyzers html,go ./features/` | Lint generated `.templ`/`.html` attributes **and** Go SDK calls |
+| **Before commit** | `datastar-lint -r --analyzers html,go ./` | Gate local changes across HTML attributes + Go SDK |
+| **In CI** | `datastar-lint -r --analyzers html,go ./` | PR gate; cross-reference runs automatically when `go` + `html` are both active |
 
-> Python and TypeScript have no template code-generation step like `templ
-> generate` (Go), so there is no "after generate" trigger for them. Their
-> `data-*` markup is linted directly by the default `html` analyzer (now covering
-> `.tsx`/`.jsx`/`.ts`/`.js`), and their backend SDK calls by the `typescript`
-> analyzer — see [Available analyzers](#available-analyzers). (TypeScript still
-> has its usual compile/transpile step via `tsc`/`vite`; that is unrelated to
-> Datastar codegen.)
+> **TypeScript / JavaScript:** these have no template code-generation step like
+> `templ generate` (Go), so there is no "after generate" trigger. Their `data-*`
+> markup (in `.tsx`/`.jsx`/`.ts`/`.js`) is linted by the default `html` analyzer,
+> and their backend SDK calls by the `typescript` analyzer. Lint both with:
+> `datastar-lint -r --analyzers html,typescript ./src`
+> (Python SDK calls: add `python`, built with `-tags analyzer_python`).
+> TypeScript's own `tsc`/`vite` compile step is unrelated to Datastar codegen.
 
 ## Why datastar-lint
 
