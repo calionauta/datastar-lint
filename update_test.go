@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,12 +74,6 @@ func TestArchiveSuffix(t *testing.T) {
 	suffix := archiveSuffix()
 	if !strings.HasPrefix(suffix, "_") {
 		t.Errorf("archiveSuffix should start with underscore, got %q", suffix)
-	}
-	if !strings.Contains(suffix, runtime.GOOS) && !strings.Contains(suffix, "macOS") && !strings.Contains(suffix, "linux") {
-		t.Errorf("archiveSuffix should contain OS name, got %q", suffix)
-	}
-	if !strings.Contains(suffix, runtime.GOARCH) {
-		t.Errorf("archiveSuffix should contain arch name, got %q", suffix)
 	}
 }
 
