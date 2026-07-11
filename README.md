@@ -6,6 +6,19 @@ Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`Pa
 
 > **Version compatibility**: Tested against Datastar **v1.x**. The rules check stable DOM-level and Datastar-API-level patterns. Minor/patch releases of Datastar (Y.Z) should not affect correctness. For major releases, an audit will be published alongside the linter update. Run `datastar-lint --version` to see the linter version.
 
+## Contents
+
+- [Install](#install)
+- [Usage](#usage)
+- [Available analyzers](#available-analyzers)
+- [Update flags](#update-flags)
+- [What it catches](#what-it-catches)
+- [Enabling analyzers](#enabling-analyzers)
+- [Architecture](#architecture)
+- [Where to run it](#where-to-run-it)
+- [Why datastar-lint](#why-datastar-lint)
+- [License](#license)
+
 ## Install
 
 ```bash
@@ -14,11 +27,9 @@ go install github.com/calionauta/datastar-lint@latest
 
 Requires Go 1.26+.
 
-With optional analyzers:
-
-```bash
-go install -tags "analyzer_python analyzer_ts" github.com/calionauta/datastar-lint@latest
-```
+All analyzers (HTML, Go, Python, TypeScript) are included in the binary; only
+HTML runs by default — enable the others with `--analyzers` (see
+[Enabling analyzers](#enabling-analyzers)).
 
 ## Usage
 
@@ -26,16 +37,16 @@ go install -tags "analyzer_python analyzer_ts" github.com/calionauta/datastar-li
 # HTML/Templ linting (default analyzer)
 datastar-lint -r ./web/
 
-# Go backend linting (stdlib, always available)
+# Go backend linting (opt-in)
 datastar-lint -r --analyzers go ./api/
 
 # HTML + Go + cross-reference checks
 datastar-lint -r --analyzers html,go ./project/
 
-# Python linting (requires build tag: analyzer_python)
+# Python linting (opt-in)
 datastar-lint -r --analyzers python ./src/
 
-# TypeScript linting (requires build tag: analyzer_ts)
+# TypeScript linting (opt-in)
 datastar-lint -r --analyzers typescript ./src/
 
 # Strict mode: Pro-only attributes become errors
@@ -46,19 +57,21 @@ Exit code is `0` on clean, `1` on issues.
 
 ### Available analyzers
 
-| Analyzer | Flag name | Extensions | Build tag | Language |
-|----------|-----------|------------|-----------|----------|
-| HTML | `html` | `.html`, `.htm`, `.templ`, `.tsx`, `.jsx`, `.ts`, `.js` | _(enabled by default)_ | All — Templ (Go), JSX/TSX (TS/JS), plain HTML |
-| Go | `go` | `.go` | _(no build tag)_ | Go (stdlib `go/parser`) |
-| Python | `python` | `.py` | `analyzer_python` | Python (regex, SDK calls) |
-| TypeScript | `typescript` | `.ts`, `.tsx` | `analyzer_ts` | TypeScript/JavaScript (regex, SDK calls) |
+| Analyzer | Flag name | Extensions | Default? | Language |
+|----------|-----------|------------|----------|----------|
+| HTML | `html` | `.html`, `.htm`, `.templ`, `.tsx`, `.jsx`, `.ts`, `.js` | yes | All — Templ (Go), JSX/TSX (TS/JS), plain HTML |
+| Go | `go` | `.go` | opt-in | Go (stdlib `go/parser`) |
+| Python | `python` | `.py` | opt-in | Python |
+| TypeScript | `typescript` | `.ts`, `.tsx` | opt-in | TypeScript/JavaScript |
 
-> **Why `.templ` (and `.ts`/`.tsx`) are listed under HTML:** `.templ` is Go's
-> templating format — the HTML analyzer lints the `data-*` attributes it emits,
-> while the **Go** analyzer (separate) lints backend SDK calls. Likewise `.ts`/`.tsx`
-> are linted by **both** the HTML analyzer (markup attributes) and the TypeScript
-> analyzer (SDK selectors) when the latter is enabled. The HTML analyzer needs no
-> build tag, so `data-*` mistakes in TSX/JSX are caught by default.
+> **Two layers in a Go project:** `.templ` is Go's templating format. The
+> **HTML** analyzer lints the `data-*` attributes `.templ` emits (the markup
+> layer), while the separate **Go** analyzer lints backend SDK calls
+> (`PatchElements` selectors, etc.) in `.go` files. Likewise `.ts`/`.tsx` are
+> linted by **both** the HTML analyzer (markup) and the TypeScript analyzer (SDK
+> selectors) when enabled. All analyzers ship in the binary — only HTML runs by
+> default, so `data-*` mistakes in TSX/JSX are caught out of the box; enable
+> `go`/`typescript` with `--analyzers` for the SDK-layer checks.
 
 ### Update flags
 
@@ -83,7 +96,7 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 - **`ON_RESIZE_NO_EVENT`** — `data-on:resize` on any element — the native `resize` event only fires on `window`, not on individual elements. For element-level resize observation, use `ResizeObserver` instead. Or add the `__window` modifier. Severity: error.
 - **`ON_HASHCHANGE_NO_EVENT`** — `data-on:hashchange` on any element — the `hashchange` event only fires on `window`, not on individual elements. Use `data-on:hashchange__window` instead. Severity: error.
 
-### Go SDK checks (always built)
+### Go SDK checks
 
 - **`PATCH_ELEMENTS_NO_SELECTOR`** — `PatchElements()` / `PatchElementTempl()` / `PatchElementf()` / `PatchElementGostar()` / `RemoveElement()` / `RemoveElementf()` / `RemoveElementByID()` called without `WithSelector`/`WithSelectorID` or with empty/omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
 - **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: warning.
@@ -91,13 +104,13 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 - **`PATCH_ELEMENTF_FORMAT`** — `PatchElementf()` format string has `%` verbs that may not match the number of value arguments. Severity: hint.
 - **`GO_PARSE_ERROR`** — The Go file could not be parsed. Severity: error.
 
-### Python SDK checks (build tag: `analyzer_python`)
+### Python SDK checks
 
 - **`PY_PATCH_NO_SELECTOR`** — `SSE.patch_elements(...)` called without `selector=` keyword. Severity: warning.
 - **`PY_PATCH_EMPTY_SELECTOR`** — `SSE.patch_elements(...)` with `selector=""` or `selector=''`. Severity: warning.
 - **`PY_REMOVE_NO_SELECTOR`** — `SSE.remove_elements(...)` called with empty or missing selector argument. Severity: warning.
 
-### TypeScript SDK checks (build tag: `analyzer_ts`)
+### TypeScript SDK checks
 
 - **`TS_PATCH_NO_SELECTOR`** — `stream.patchElements(...)` or `sse.patchElements(...)` called without `selector:` in options. Severity: warning.
 - **`TS_PATCH_EMPTY_SELECTOR`** — `selector: ""` or `selector: ''`. Severity: warning.
@@ -121,18 +134,17 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 
 - **`PARSE_ERROR`** / **`FILE_OPEN`** — File could not be opened or parsed.
 
-## Build tags
+## Enabling analyzers
 
-Optional analyzers are gated behind build tags to keep the default binary lean:
+All four analyzers are compiled into every binary. Only **HTML** runs by
+default; enable the others with `--analyzers` (comma-separated):
 
 ```bash
-go install .                                   # HTML + Go analyzers
-go install -tags analyzer_python .             # + Python analyzer
-go install -tags analyzer_ts .                 # + TypeScript analyzer
-go install -tags "analyzer_python analyzer_ts" .  # All
+datastar-lint -r ./                                       # HTML only (default)
+datastar-lint -r --analyzers html,go ./                   # + Go SDK checks
+datastar-lint -r --analyzers html,typescript ./src/       # + TS SDK checks
+datastar-lint -r --analyzers html,go,python,typescript ./ # everything
 ```
-
-When a build-tagged analyzer is not compiled, running `--analyzers python` exits with an error listing available analyzers.
 
 ## Architecture
 
@@ -148,7 +160,7 @@ type Analyzer interface {
 
 Each analyzer registers itself via `init()` and `RegisterAnalyzer()`. The `run()` function collects files per-analyzer and dispatches linting. When both `go` and `html` analyzers run, a cross-reference step automatically checks for orphan selectors.
 
-To add a new language, create a file implementing `Analyzer`, call `RegisterAnalyzer()` in `init()`, and (optionally) gate it behind a build tag.
+To add a new language, create a file implementing `Analyzer`, call `RegisterAnalyzer()` in `init()`. (Analyzers currently ship in every build; see [Enabling analyzers](#enabling-analyzers).)
 
 ## Where to run it
 
@@ -158,16 +170,15 @@ change Datastar output.
 
 ### Analyzer enablement
 
-Only the **HTML** analyzer runs by default. Enable the others explicitly with
-`--analyzers` (comma-separated). Go needs no build tag; Python and TypeScript
-must be compiled in first:
+Only the **HTML** analyzer runs by default. All analyzers ship in the binary,
+so enable the others explicitly with `--analyzers` (comma-separated):
 
 | Analyzer | Runs by default? | To enable |
 |----------|------------------|-----------|
 | `html` | Yes | — (always on) |
-| `go` | No | `--analyzers ...,go` (no build tag needed) |
-| `python` | No | build with `-tags analyzer_python`, then `--analyzers ...,python` |
-| `typescript` | No | build with `-tags analyzer_ts`, then `--analyzers ...,typescript` |
+| `go` | No | `--analyzers ...,go` |
+| `python` | No | `--analyzers ...,python` |
+| `typescript` | No | `--analyzers ...,typescript` |
 
 ### When to run
 
@@ -182,7 +193,7 @@ must be compiled in first:
 > markup (in `.tsx`/`.jsx`/`.ts`/`.js`) is linted by the default `html` analyzer,
 > and their backend SDK calls by the `typescript` analyzer. Lint both with:
 > `datastar-lint -r --analyzers html,typescript ./src`
-> (Python SDK calls: add `python`, built with `-tags analyzer_python`).
+> (Python SDK calls: add `python` to `--analyzers`.)
 > TypeScript's own `tsc`/`vite` compile step is unrelated to Datastar codegen.
 
 ## Why datastar-lint

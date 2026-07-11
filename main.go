@@ -1,10 +1,13 @@
 // datastar-lint — validates Datastar HTML attributes and backend SDK calls.
 //
 // Multi-language by design. Built-in analyzers:
-//   - html   (default): lints .html, .htm, .templ, .tsx, .jsx, .ts, .js files for Datastar attribute correctness
-//   - go     (stdlib):  lints .go files for missing PatchElements selectors
-//   - python (opt-in):  lints .py files for missing patch_elements selectors (build tag: analyzer_python)
-//   - typescript (opt-in): lints .ts/.tsx files for missing patchElements selectors (build tag: analyzer_ts)
+//   - html      (default): lints .html, .htm, .templ, .tsx, .jsx, .ts, .js files for Datastar attribute correctness
+//   - go        (opt-in):  lints .go files for missing PatchElements selectors
+//   - python    (opt-in):  lints .py files for missing patch_elements selectors
+//   - typescript (opt-in): lints .ts/.tsx files for missing patchElements selectors
+//
+// All analyzers are compiled in; only html runs by default. Enable the others
+// with --analyzers (e.g. --analyzers html,go,typescript).
 //
 // Usage:
 //
@@ -34,7 +37,7 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.9.1"
+var version = "0.10.0"
 
 // updateCheckTimeout is the HTTP timeout used for the automatic version
 // check on startup (kept short so linting is never delayed).

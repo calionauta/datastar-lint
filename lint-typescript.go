@@ -1,5 +1,3 @@
-//go:build analyzer_ts
-
 package main
 
 import (

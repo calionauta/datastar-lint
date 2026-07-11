@@ -17,8 +17,8 @@
 ├── analyzer.go          # Analyzer interface + registration
 ├── lint-html.go         # HTML analyzer
 ├── lint-go.go           # Go analyzer
-├── lint-python.go       # Python analyzer (build tag: analyzer_python)
-├── lint-typescript.go   # TypeScript analyzer (build tag: analyzer_ts)
+├── lint-python.go       # Python analyzer
+├── lint-typescript.go   # TypeScript analyzer
 ├── source.go            # Raw source scanning for broken attributes
 └── testdata/            # E2E test fixtures
 ```

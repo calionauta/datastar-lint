@@ -408,9 +408,6 @@ func handler(sse *datastar.ServerSentEventGenerator) {
 }
 
 func TestE2EPythonBad(t *testing.T) {
-	if LookupAnalyzer("python") == nil {
-		t.Skip("python analyzer not compiled (use -tags analyzer_python)")
-	}
 	dir := t.TempDir()
 	writeFile(t, dir+"/bad.py", `from datastar_py import SSE
 def handler(sse):
@@ -425,9 +422,6 @@ def handler(sse):
 }
 
 func TestE2EPythonGood(t *testing.T) {
-	if LookupAnalyzer("python") == nil {
-		t.Skip("python analyzer not compiled (use -tags analyzer_python)")
-	}
 	dir := t.TempDir()
 	writeFile(t, dir+"/good.py", `from datastar_py import SSE
 def handler(sse):
@@ -441,9 +435,6 @@ def handler(sse):
 }
 
 func TestE2ETSBad(t *testing.T) {
-	if LookupAnalyzer("typescript") == nil {
-		t.Skip("typescript analyzer not compiled (use -tags analyzer_ts)")
-	}
 	dir := t.TempDir()
 	writeFile(t, dir+"/bad.ts", `import { createStream } from '@starfederation/datastar-sdk'
 const stream = createStream({} as any)
@@ -456,9 +447,6 @@ stream.removeElements('')
 }
 
 func TestE2ETSGood(t *testing.T) {
-	if LookupAnalyzer("typescript") == nil {
-		t.Skip("typescript analyzer not compiled (use -tags analyzer_ts)")
-	}
 	dir := t.TempDir()
 	writeFile(t, dir+"/good.ts", `import { createStream } from '@starfederation/datastar-sdk'
 const stream = createStream({} as any)
@@ -653,12 +641,14 @@ func TestGoMarhalSignalsNil(t *testing.T) {
 	}
 }
 
-// --------------- Python/TS analyzer tests (build-tag gated) ---------------
+// --------------- Python/TS analyzer tests ---------------
 
+// All analyzers are compiled in by default, so this is now a registration
+// check that fails loudly if an analyzer is ever accidentally gated again.
 func skipIfAnalyzerMissing(t *testing.T, name string) {
 	t.Helper()
 	if LookupAnalyzer(name) == nil {
-		t.Skipf("%s analyzer not compiled (use -tags analyzer_%s)", name, name)
+		t.Fatalf("%s analyzer should be registered (all analyzers are built in)", name)
 	}
 }
 
@@ -1034,11 +1024,6 @@ func TestAllDocumentedRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
-			if tc.analyzer != "html" {
-				if LookupAnalyzer(tc.analyzer) == nil {
-					t.Skipf("analyzer %q not compiled", tc.analyzer)
-				}
-			}
 			results := lintString(t, config{}, tc.fixture, tc.ext, tc.analyzer)
 			if r := hasCode(t, results, tc.code); r == nil {
 				t.Errorf("%s: expected %s for %s; got %v", tc.code, tc.code, tc.desc, codes(results))

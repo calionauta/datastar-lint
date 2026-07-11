@@ -1,5 +1,3 @@
-//go:build analyzer_python
-
 package main
 
 import (
