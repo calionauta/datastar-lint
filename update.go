@@ -32,6 +32,9 @@ const (
 	githubRepo  = "datastar-lint"
 )
 
+// osExecutable is overridden in tests to control which binary gets replaced.
+var osExecutable = os.Executable
+
 // ---------------------------------------------------------------------------
 // GitHub API types (minimal)
 // ---------------------------------------------------------------------------
@@ -80,6 +83,31 @@ func CheckForUpdate(timeout time.Duration) string {
 		cur, lat, githubOwner, githubRepo)
 }
 
+// CheckForUpdateFromURL is like CheckForUpdate but uses a custom API URL
+// (used in tests with httptest.Server).
+func CheckForUpdateFromURL(apiURL string, timeout time.Duration) string {
+	release, err := fetchReleaseFromURL(apiURL, timeout)
+	if err != nil {
+		return ""
+	}
+
+	latestTag := release.TagName
+	currentTag := "v" + strings.TrimPrefix(version, "v")
+
+	if !isNewerVersion(currentTag, latestTag) {
+		return ""
+	}
+
+	cur := strings.TrimPrefix(currentTag, "v")
+	lat := strings.TrimPrefix(latestTag, "v")
+
+	return fmt.Sprintf("── ⋆ ──\n"+
+		"  Update available: %s → %s\n"+
+		"  Run  datastar-lint --update  to upgrade automatically,\n"+
+		"  or   go install %s/%s@latest\n",
+		cur, lat, githubOwner, githubRepo)
+}
+
 // SelfUpdate downloads the archive for the current platform from the latest
 // GitHub release, extracts the binary, and atomically replaces the running
 // executable.
@@ -91,7 +119,7 @@ func SelfUpdate() error {
 
 	latestTag := release.TagName
 	currentTag := "v" + strings.TrimPrefix(version, "v")
-	if !isNewerVersion(currentTag, latestTag) && !strings.EqualFold(currentTag, latestTag) {
+	if !isNewerVersion(currentTag, latestTag) {
 		return fmt.Errorf("already up-to-date (v%s)", strings.TrimPrefix(version, "v"))
 	}
 
@@ -117,6 +145,42 @@ func SelfUpdate() error {
 	}
 
 	// Atomically replace the running binary.
+	return atomicReplace(bin)
+}
+
+// SelfUpdateFromURL is like SelfUpdate but uses custom URLs for API and
+// download (used in tests with httptest.Server).
+func SelfUpdateFromURL(apiURL, downloadBaseURL string, timeout time.Duration) error {
+	release, err := fetchReleaseFromURL(apiURL, timeout)
+	if err != nil {
+		return fmt.Errorf("check for updates: %w", err)
+	}
+
+	latestTag := release.TagName
+	currentTag := "v" + strings.TrimPrefix(version, "v")
+	if !isNewerVersion(currentTag, latestTag) {
+		return fmt.Errorf("already up-to-date (v%s)", strings.TrimPrefix(version, "v"))
+	}
+
+	suffix := archiveSuffix()
+	var downloadURL string
+	for _, a := range release.Assets {
+		if strings.Contains(a.Name, suffix) {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		return fmt.Errorf("no release asset found for %s/%s (expected suffix %q)",
+			runtime.GOOS, runtime.GOARCH, suffix)
+	}
+
+	fmt.Fprintf(os.Stderr, "Downloading %s …\n", release.TagName)
+	bin, err := downloadBinaryFromURL(downloadURL, &http.Client{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+
 	return atomicReplace(bin)
 }
 
@@ -191,7 +255,10 @@ func archiveSuffix() string {
 func fetchLatestRelease(timeout time.Duration) (*ghRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest",
 		githubOwner, githubRepo)
+	return fetchReleaseFromURL(url, timeout)
+}
 
+func fetchReleaseFromURL(url string, timeout time.Duration) (*ghRelease, error) {
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -224,7 +291,10 @@ func fetchLatestRelease(timeout time.Duration) (*ghRelease, error) {
 // downloadBinary downloads a tar.gz archive from url and extracts the embedded
 // executable binary, returning its content.
 func downloadBinary(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	return downloadBinaryFromURL(url, &http.Client{Timeout: 60 * time.Second})
+}
+
+func downloadBinaryFromURL(url string, client *http.Client) ([]byte, error) {
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
@@ -274,7 +344,7 @@ func downloadBinary(url string) ([]byte, error) {
 // It writes to a sibling temp file, renames the old binary to a backup, and
 // then renames the new file in place. On success the backup is removed.
 func atomicReplace(newBin []byte) error {
-	exe, err := os.Executable()
+	exe, err := osExecutable()
 	if err != nil {
 		return fmt.Errorf("cannot determine executable path: %w", err)
 	}

@@ -208,7 +208,8 @@ func qualifiedCall(pkgName, funcName string) string {
 func isPatchFunc(name string) bool {
 	switch name {
 	case "PatchElements", "PatchElementTempl", "PatchElementf",
-		"PatchElementGostar", "RenderAndPatch", "RemoveElement":
+		"PatchElementGostar", "RemoveElement",
+		"RemoveElementf", "RemoveElementByID":
 		return true
 	}
 	return false

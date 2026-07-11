@@ -22,7 +22,7 @@ func (TSAnalyzer) FileExtensions() []string { return []string{"ts", "tsx"} }
 
 var (
 	tsPatchCallRE  = regexp.MustCompile(`\b(stream|sse)\.(patchElements|patchElementf)\(`)
-	tsRemoveCallRE = regexp.MustCompile(`\b(stream|sse)\.removeElement\(`)
+	tsRemoveCallRE = regexp.MustCompile(`\b(stream|sse)\.removeElements\(`)
 	tsSelectorRE   = regexp.MustCompile(`\bselector\s*:`)
 	tsEmptySelRE   = regexp.MustCompile(`\bselector\s*:\s*""` + `|` + `\bselector\s*:\s*''`)
 	tsArgStringRE  = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
@@ -48,13 +48,13 @@ func tsLintSource(path, src string) []lintResult {
 	for i, line := range lines {
 		lineNo := i + 1
 
-		// Check removeElement(first_arg) — selector is positional.
+		// Check removeElements(first_arg) — selector is positional.
 		if tsRemoveCallRE.MatchString(line) {
 			firstArg := tsExtractFirstStringArg(line)
 			if firstArg == "" {
 				results = append(results, tsResult(path, lineNo, "TS_REMOVE_NO_SELECTOR",
-					"removeElement() called with empty or missing selector — remove target is unknown",
-					"Pass a CSS selector as the first argument: stream.removeElement(\"#element-id\")"))
+					"removeElements() called with empty or missing selector — remove target is unknown",
+					"Pass a CSS selector as the first argument: stream.removeElements(\"#element-id\")"))
 			}
 			continue
 		}

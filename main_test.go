@@ -393,7 +393,7 @@ func TestE2EPythonBad(t *testing.T) {
 def handler(sse):
     SSE.patch_elements(sse, "<div></div>")
     SSE.patch_elements(sse, "<div></div>", selector="")
-    SSE.remove_element(sse, "")
+    SSE.remove_elements(sse, "")
 `)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"python": true})
 	assertHasCode(t, results, "PY_PATCH_NO_SELECTOR")
@@ -409,7 +409,7 @@ func TestE2EPythonGood(t *testing.T) {
 	writeFile(t, dir+"/good.py", `from datastar_py import SSE
 def handler(sse):
     SSE.patch_elements(sse, "<div id='x'>x</div>", selector="#x")
-    SSE.remove_element(sse, "#x")
+    SSE.remove_elements(sse, "#x")
 `)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"python": true})
 	if len(results) > 0 {
@@ -425,7 +425,7 @@ func TestE2ETSBad(t *testing.T) {
 	writeFile(t, dir+"/bad.ts", `import { createStream } from '@starfederation/datastar-sdk'
 const stream = createStream({} as any)
 stream.patchElements('<div></div>')
-stream.removeElement('')
+stream.removeElements('')
 `)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"typescript": true})
 	assertHasCode(t, results, "TS_PATCH_NO_SELECTOR")
@@ -440,7 +440,7 @@ func TestE2ETSGood(t *testing.T) {
 	writeFile(t, dir+"/good.ts", `import { createStream } from '@starfederation/datastar-sdk'
 const stream = createStream({} as any)
 stream.patchElements('<div id="x">x</div>', { selector: '#x' })
-stream.removeElement('#x')
+stream.removeElements('#x')
 `)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"typescript": true})
 	if len(results) > 0 {

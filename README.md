@@ -78,7 +78,7 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 
 ### Go SDK checks (always built)
 
-- **`PATCH_ELEMENTS_NO_SELECTOR`** — `sse.PatchElements()` / `sse.PatchElementTempl()` / `sse.PatchElementf()` / `sse.PatchElementGostar()` / `RenderAndPatch()` / `sse.RemoveElement()` called without `WithSelector`/`WithSelectorID` or with empty/omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
+- **`PATCH_ELEMENTS_NO_SELECTOR`** — `PatchElements()` / `PatchElementTempl()` / `PatchElementf()` / `PatchElementGostar()` / `RemoveElement()` / `RemoveElementf()` / `RemoveElementByID()` called without `WithSelector`/`WithSelectorID` or with empty/omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
 - **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: warning.
 - **`MERGE_SIGNALS_NIL`** — `MarshalAndPatchSignals(nil)` produces `"null"` on the wire, overwriting all signals. Severity: hint.
 - **`PATCH_ELEMENTF_FORMAT`** — `PatchElementf()` format string has `%` verbs that may not match the number of value arguments. Severity: hint.
@@ -88,13 +88,13 @@ On every run, `datastar-lint` silently checks for a newer version (with a 2 sec
 
 - **`PY_PATCH_NO_SELECTOR`** — `SSE.patch_elements(...)` called without `selector=` keyword. Severity: warning.
 - **`PY_PATCH_EMPTY_SELECTOR`** — `SSE.patch_elements(...)` with `selector=""` or `selector=''`. Severity: warning.
-- **`PY_REMOVE_NO_SELECTOR`** — `SSE.remove_element(...)` called with empty or missing selector argument. Severity: warning.
+- **`PY_REMOVE_NO_SELECTOR`** — `SSE.remove_elements(...)` called with empty or missing selector argument. Severity: warning.
 
 ### TypeScript SDK checks (build tag: `analyzer_ts`)
 
 - **`TS_PATCH_NO_SELECTOR`** — `stream.patchElements(...)` or `sse.patchElements(...)` called without `selector:` in options. Severity: warning.
 - **`TS_PATCH_EMPTY_SELECTOR`** — `selector: ""` or `selector: ''`. Severity: warning.
-- **`TS_REMOVE_NO_SELECTOR`** — `stream.removeElement(...)` / `sse.removeElement(...)` called with empty or missing selector argument. Severity: warning.
+- **`TS_REMOVE_NO_SELECTOR`** — `stream.removeElements(...)` / `sse.removeElements(...)` called with empty or missing selector argument. Severity: warning.
 
 ### Cross-reference checks (when both `go` and `html` analyzers are active)
 
@@ -145,11 +145,36 @@ To add a new language, create a file implementing `Analyzer`, call `RegisterAnal
 
 ## Where to run it
 
-| When | How | Why |
-|------|-----|-----|
-| **After `templ generate`** | `templ generate && datastar-lint -r ./features/` | Catches attributes in `.templ` files |
-| **Before commit** | `datastar-lint -r --analyzers html,go ./` | Full gate across HTML + Go |
-| **In CI** | `datastar-lint -r --analyzers html,go ./` | PR gate with cross-reference |
+datastar-lint catches mistakes that language compilers and browsers ignore
+(see [Why datastar-lint](#why-datastar-lint)). Run it wherever you produce or
+change Datastar output:
+
+| When | Command | Why |
+|------|---------|-----|
+| **After `templ generate`** | `templ generate && datastar-lint -r ./features/` | Templ emits `.templ`/`.html` — lint the generated attributes |
+| **Before commit** | `datastar-lint -r ./` | Gate on every change across all enabled analyzers |
+| **In CI** | `datastar-lint -r ./` | PR gate; cross-reference needs both `go` + `html` |
+
+> Python and TypeScript have no code-generation step, so there is no "after
+> generate" trigger for them — lint their source directly with the matching
+> analyzer flag (see [Available analyzers](#available-analyzers)).
+
+## Why datastar-lint
+
+These mistakes compile and build cleanly — they only fail at runtime, in the
+browser or over the SSE stream:
+
+- **HTML attribute typos** (`data-on-clik`) — the browser silently ignores
+  unknown `data-*` attributes; no build error.
+- **Missing SDK selectors** (`SSE.patch_elements()` without `selector=`) — the
+  Datastar client throws `PatchElementsNoTargetsFound` at runtime; the SDK does
+  not validate this.
+- **Go `PatchElementf` format mismatch** — `go build` does not check `fmt` verbs
+  against arguments.
+- **`MarshalAndPatchSignals(nil)`** — compiles fine, but sends `"null"` on the
+  wire, wiping all signals.
+
+datastar-lint shifts these from "caught in production" to "caught in CI".
 
 ## License
 

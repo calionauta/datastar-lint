@@ -22,7 +22,7 @@ func (PythonAnalyzer) FileExtensions() []string { return []string{"py"} }
 
 var (
 	pyPatchCallRE  = regexp.MustCompile(`\b(SSE\.patch_elements|DatastarResponse)\(`)
-	pyRemoveCallRE = regexp.MustCompile(`\bSSE\.remove_element\(`)
+	pyRemoveCallRE = regexp.MustCompile(`\bSSE\.remove_elements\(`)
 	pySelectorRE   = regexp.MustCompile(`\bselector\s*=`)
 	pyEmptySelRE   = regexp.MustCompile(`\bselector\s*=\s*""` + `|` + `\bselector\s*=\s*''`)
 	pyArgStringRE  = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
@@ -48,13 +48,13 @@ func pyLintSource(path, src string) []lintResult {
 	for i, line := range lines {
 		lineNo := i + 1
 
-		// Check remove_element(first_arg) — selector is positional.
+		// Check remove_elements(first_arg) — selector is positional.
 		if pyRemoveCallRE.MatchString(line) {
 			firstArg := pyExtractFirstStringArg(line)
 			if firstArg == "" {
 				results = append(results, pyResult(path, lineNo, "PY_REMOVE_NO_SELECTOR",
-					"SSE.remove_element() called with empty or missing selector — remove target is unknown",
-					"Pass a CSS selector as the first argument: SSE.remove_element(\"#element-id\")"))
+					"SSE.remove_elements() called with empty or missing selector — remove target is unknown",
+					"Pass a CSS selector as the first argument: SSE.remove_elements(\"#element-id\")"))
 			}
 			continue
 		}
