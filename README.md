@@ -48,10 +48,17 @@ Exit code is `0` on clean, `1` on issues.
 
 | Analyzer | Flag name | Extensions | Build tag | Language |
 |----------|-----------|------------|-----------|----------|
-| HTML | `html` | `.html`, `.htm`, `.templ` | _(default)_ | All (Templ, Jinja, ERB, JSX, plain HTML) |
+| HTML | `html` | `.html`, `.htm`, `.templ`, `.tsx`, `.jsx`, `.ts`, `.js` | _(default)_ | All — Templ (Go), Jinja (Python), ERB (Ruby), JSX/TSX (TS/JS), plain HTML |
 | Go | `go` | `.go` | _(default)_ | Go (stdlib `go/parser`) |
 | Python | `python` | `.py` | `analyzer_python` | Python (regex) |
-| TypeScript | `typescript` | `.ts`, `.tsx` | `analyzer_ts` | TypeScript/JavaScript (regex) |
+| TypeScript | `typescript` | `.ts`, `.tsx` | `analyzer_ts` | TypeScript/JavaScript (regex, SDK calls) |
+
+> **Why `.templ` (and `.ts`/`.tsx`) are listed under HTML:** `.templ` is Go's
+> templating format — the HTML analyzer lints the `data-*` attributes it emits,
+> while the **Go** analyzer (separate) lints backend SDK calls. Likewise `.ts`/`.tsx`
+> are linted by **both** the HTML analyzer (markup attributes) and the TypeScript
+> analyzer (SDK selectors) when the latter is enabled. The HTML analyzer needs no
+> build tag, so `data-*` mistakes in TSX/JSX are caught by default.
 
 ### Update flags
 
@@ -155,9 +162,13 @@ change Datastar output:
 | **Before commit** | `datastar-lint -r ./` | Gate on every change across all enabled analyzers |
 | **In CI** | `datastar-lint -r ./` | PR gate; cross-reference needs both `go` + `html` |
 
-> Python and TypeScript have no code-generation step, so there is no "after
-> generate" trigger for them — lint their source directly with the matching
-> analyzer flag (see [Available analyzers](#available-analyzers)).
+> Python and TypeScript have no template code-generation step like `templ
+> generate` (Go), so there is no "after generate" trigger for them. Their
+> `data-*` markup is linted directly by the default `html` analyzer (now covering
+> `.tsx`/`.jsx`/`.ts`/`.js`), and their backend SDK calls by the `typescript`
+> analyzer — see [Available analyzers](#available-analyzers). (TypeScript still
+> has its usual compile/transpile step via `tsc`/`vite`; that is unrelated to
+> Datastar codegen.)
 
 ## Why datastar-lint
 

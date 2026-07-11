@@ -60,8 +60,31 @@ func TestUnknownAttrAndTypo(t *testing.T) {
 	r := hasCode(t, results, "UNKNOWN_ATTR_TYPO")
 	if r == nil {
 		t.Errorf("expected UNKNOWN_ATTR_TYPO for data-on-clik; got %v", codes(results))
-	} else if !strings.Contains(r.Suggestion, "data-on:clik") {
-		t.Errorf("typo suggestion should mention data-on:clik, got %q", r.Suggestion)
+	} else if !strings.Contains(r.Suggestion, "data-on:click") {
+		t.Errorf("typo suggestion should mention data-on:click, got %q", r.Suggestion)
+	}
+}
+
+func TestSuggestEventNameCorrection(t *testing.T) {
+	// Misspelled event name must be corrected, not just the separator.
+	r := hasCode(t, lintString(t, config{}, `<div data-on-clik="@post('/x')"></div>`, "html"), "UNKNOWN_ATTR_TYPO")
+	if r == nil || !strings.Contains(r.Suggestion, "data-on:click") {
+		t.Errorf("expected data-on:click suggestion, got %q", r.Suggestion)
+	}
+	// Misspelled event with a modifier keeps the modifier and fixes the event.
+	r = hasCode(t, lintString(t, config{}, `<div data-on-clik__window="@post('/x')"></div>`, "html"), "UNKNOWN_ATTR_TYPO")
+	if r == nil || !strings.Contains(r.Suggestion, "data-on:click__window") {
+		t.Errorf("expected data-on:click__window suggestion, got %q", r.Suggestion)
+	}
+	// Misspelled hyphen-compound event keeps the hyphen separator.
+	r = hasCode(t, lintString(t, config{}, `<div data-on-intersec="@get('/x')"></div>`, "html"), "UNKNOWN_ATTR_TYPO")
+	if r == nil || !strings.Contains(r.Suggestion, "data-on-intersect") {
+		t.Errorf("expected data-on-intersect suggestion, got %q", r.Suggestion)
+	}
+	// Unknown custom event name is left untouched (no false correction).
+	r = hasCode(t, lintString(t, config{}, `<div data-on-mycustomevent="@get('/x')"></div>`, "html"), "UNKNOWN_ATTR_TYPO")
+	if r == nil || !strings.Contains(r.Suggestion, "data-on:mycustomevent") {
+		t.Errorf("expected data-on:mycustomevent suggestion, got %q", r.Suggestion)
 	}
 }
 
@@ -469,6 +492,46 @@ func TestE2EHTMLGood(t *testing.T) {
 	if len(results) > 0 {
 		t.Errorf("expected 0 results for good.html, got %d: %v", len(results), codes(results))
 	}
+}
+
+func TestE2ETSXBad(t *testing.T) {
+	// lintString defaults to the html analyzer and writes a .tsx temp file.
+	src := `export function Counter() {
+  const [count, setCount] = useState<number>(0); // generic must NOT false-positive
+  return (
+    <div data-foobar="$x"></div>
+    <button data-on-clik="@post('/x')">go</button>
+    <dialog class="modal" data-show="$open">m</dialog>
+  );
+}
+`
+	results := lintString(t, config{}, src, "tsx")
+	assertHasCode(t, results, "UNKNOWN_ATTR")
+	assertHasCode(t, results, "UNKNOWN_ATTR_TYPO")
+	assertHasCode(t, results, "MODAL_DATA_SHOW")
+}
+
+func TestE2ETSXGood(t *testing.T) {
+	src := `export function Row() {
+  const [count] = useState<number>(0);
+  return (
+    <div data-show="$open" data-on:click="@post('/x')">
+      <span data-text={$count}>{count}</span>
+    </div>
+  );
+}
+`
+	results := lintString(t, config{}, src, "tsx")
+	if len(results) > 0 {
+		t.Errorf("expected 0 results for good.tsx, got %d: %v", len(results), codes(results))
+	}
+}
+
+func TestE2ETSStringLiteral(t *testing.T) {
+	// data-* inside HTML string literals passed to patchElements must be linted.
+	src := `stream.patchElements('<div data-foobar="$x"></div>');`
+	results := lintString(t, config{}, src, "ts")
+	assertHasCode(t, results, "UNKNOWN_ATTR")
 }
 
 func TestE2EMultiAnalyzer(t *testing.T) {

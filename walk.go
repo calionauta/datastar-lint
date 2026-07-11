@@ -79,8 +79,10 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 	// Skip FOREIGN_ATTR check on .templ files: Go template expressions { ... }
 	// embed Go code containing @post(), @get(), etc. which the golang.org/x/net/html
 	// parser mangles into separate "attributes", producing false positives.
-	// Only run this check on pure .html/.htm files.
-	if !strings.HasSuffix(path, ".templ") {
+	// Same applies to JS/TS source (.tsx/.jsx/.ts/.js), where arrow functions,
+	// generics (Foo<Bar>), and comparisons (a < b) are mangled into fake
+	// attributes. Only run this check on pure .html/.htm files.
+	if !strings.HasSuffix(path, ".templ") && !isJSLike(path) {
 		for _, a := range foreignAttrsFound {
 			line, col := getAttrPosition(n, a)
 			*results = append(*results, lintResult{

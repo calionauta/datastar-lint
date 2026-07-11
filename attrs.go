@@ -295,6 +295,55 @@ func isValidHyphenAttr(name string) bool {
 	return false
 }
 
+// knownOnEvents lists valid event names accepted by data-on:<event>. It is used
+// to correct misspelled event names in the dynamic data-on-* suggestion. Seeded
+// from the typo map, the hyphen-compound events, and common DOM events.
+var knownOnEvents = func() map[string]bool {
+	set := map[string]bool{}
+	for k := range commonTypos {
+		if strings.HasPrefix(k, "data-on-") {
+			set[k[len("data-on-"):]] = true
+		}
+	}
+	for _, p := range validHyphenPrefixes {
+		set[p[len("data-on-"):]] = true
+	}
+	for _, e := range []string{
+		"load", "init", "DOMContentLoaded", "hashchange", "resize",
+		"dblclick", "contextmenu", "mousemove", "mouseout", "mousedown",
+		"mouseup", "pointerdown", "pointerup", "pointermove", "wheel",
+		"scroll", "visibilitychange", "animationend", "transitionend",
+		"copy", "cut", "paste", "drag", "dragstart", "dragend", "dragover",
+		"drop", "play", "pause", "ended", "ratechange", "volumechange",
+		"seeked", "timeupdate", "abort", "error", "canplay", "loadeddata",
+		"toggle",
+	} {
+		set[e] = true
+	}
+	return set
+}()
+
+// correctEventName returns the event name to suggest for a (possibly misspelled)
+// data-on event. If the name is already valid it is returned unchanged; if it is
+// a near-miss (Levenshtein ≤ 2) of a known event, the closest known event is
+// returned; otherwise "" is returned (caller leaves the name as-is). Unknown
+// custom event names stay untouched.
+func correctEventName(event string) string {
+	if knownOnEvents[event] {
+		return event
+	}
+	best := ""
+	bestDist := 3 // only suggest near-misses (≤ 2), else leave as-is
+	for known := range knownOnEvents {
+		d := levenshtein(event, known)
+		if d < bestDist {
+			bestDist = d
+			best = known
+		}
+	}
+	return best
+}
+
 // commonTypos maps known misspellings to corrections.
 // Source: dictator-datastar v0.1.0 typos.rs + Datastar engine.ts real errors.
 var commonTypos = map[string]string{
@@ -349,10 +398,22 @@ func suggestAttr(name string) (string, bool) {
 	}
 
 	// 2. Dynamic check: data-on-* (hyphen) should be data-on:* (colon),
-	//    EXCEPT for known compound attribute names.
+	//    EXCEPT for known compound attribute names. The event name itself may
+	//    be misspelled (e.g. "clik" → "click"); correctEventName fixes that,
+	//    and hyphen-compound events (intersect, interval, ...) keep the hyphen.
 	if strings.HasPrefix(name, "data-on-") && !isValidHyphenAttr(name) {
-		eventName := name[len("data-on-"):]
-		return "data-on:" + eventName, true
+		rest := name[len("data-on-"):]
+		eventName, mods := rest, ""
+		if i := strings.Index(rest, "__"); i >= 0 {
+			eventName, mods = rest[:i], rest[i:]
+		}
+		if corrected := correctEventName(eventName); corrected != "" {
+			if isValidHyphenAttr("data-on-" + corrected) {
+				return "data-on-" + corrected + mods, true
+			}
+			return "data-on:" + corrected + mods, true
+		}
+		return "data-on:" + rest, true
 	}
 
 	// 3. Dynamic check: data-bind-*, data-attr-*, data-class-*, data-style-*
