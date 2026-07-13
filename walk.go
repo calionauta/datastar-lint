@@ -225,6 +225,12 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 	// Look up known attribute.
 	info, known := knownAttrs[baseAttr]
 	if !known {
+		// User-configured allowlist (from .datastar-lint.yaml) — intentional
+		// third-party/custom data-* attrs (e.g. data-tool, data-doc-id) that are
+		// read by app JS and must not be flagged.
+		if cfg.allowedAttrs != nil && isAllowedCustomAttr(cfg.allowedAttrs, baseAttr) {
+			return
+		}
 		// Check if it's misspelled (Levenshtein not worth it —
 		// just try common typos).
 		if suggestion, found := suggestAttr(baseAttr); found {
@@ -251,7 +257,7 @@ func validateDatastarAttr(n *html.Node, a html.Attribute, path, tag string, resu
 			Attribute:  name,
 			Code:       "UNKNOWN_ATTR",
 			Message:    fmt.Sprintf("'%s' is not a known Datastar attribute", name),
-			Suggestion: "Check spelling or see data-star.dev/reference/attributes",
+			Suggestion: "If this is an intentional custom attribute (not Datastar), add it to .datastar-lint.yaml under attributes.allowed. Otherwise check spelling or see data-star.dev/reference/attributes",
 		})
 		return
 	}

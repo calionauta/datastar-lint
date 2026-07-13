@@ -65,6 +65,72 @@ func TestUnknownAttrAndTypo(t *testing.T) {
 	}
 }
 
+func TestAllowedAttributes(t *testing.T) {
+	// An attribute listed in the config allowlist must not be flagged.
+	cfg := config{
+		allowedAttrs: map[string]bool{
+			"data-tool":   true,
+			"data-doc-id": true,
+		},
+	}
+
+	results := lintString(t, cfg, `<button data-tool="select">sel</button>`, "html")
+	if r := hasCode(t, results, "UNKNOWN_ATTR"); r != nil {
+		t.Errorf("data-tool should be allowed; got UNKNOWN_ATTR: %v", r)
+	}
+	results = lintString(t, cfg, `<main data-doc-id="abc"></main>`, "html")
+	if r := hasCode(t, results, "UNKNOWN_ATTR"); r != nil {
+		t.Errorf("data-doc-id should be allowed; got UNKNOWN_ATTR: %v", r)
+	}
+
+	// Attributes NOT in the allowlist are still flagged.
+	results = lintString(t, config{}, `<div data-foobar="$x"></div>`, "html")
+	if r := hasCode(t, results, "UNKNOWN_ATTR"); r == nil {
+		t.Errorf("expected UNKNOWN_ATTR for data-foobar (not allowed)")
+	}
+}
+
+func TestAllowedAttrWithKey(t *testing.T) {
+	cfg := config{
+		allowedAttrs: map[string]bool{"data-tool": true},
+	}
+	results := lintString(t, cfg, `<div data-tool:plugin="foo"></div>`, "html")
+	if r := hasCode(t, results, "UNKNOWN_ATTR"); r != nil {
+		t.Errorf("data-tool:plugin should be allowed; got UNKNOWN_ATTR")
+	}
+	// Also check it doesn't trigger KEY_NOT_ALLOWED for the custom attr.
+	if r := hasCode(t, results, "KEY_NOT_ALLOWED"); r != nil {
+		t.Errorf("allowed custom attr with key should not trigger KEY_NOT_ALLOWED")
+	}
+}
+
+func TestConfigFileDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := []byte("attributes:\n  allowed:\n    - data-tool\n    - data-doc-id\n")
+	if err := os.WriteFile(filepath.Join(dir, ".datastar-lint.yaml"), yamlContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	allowed := loadAllowedAttrs(dir, "")
+	if len(allowed) != 2 {
+		t.Fatalf("expected 2 allowed attrs, got %d: %v", len(allowed), allowed)
+	}
+	if !allowed["data-tool"] {
+		t.Error("expected data-tool to be allowed")
+	}
+	if !allowed["data-doc-id"] {
+		t.Error("expected data-doc-id to be allowed")
+	}
+}
+
+func TestConfigFileNotFound(t *testing.T) {
+	dir := t.TempDir()
+	allowed := loadAllowedAttrs(dir, "")
+	if len(allowed) != 0 {
+		t.Errorf("expected empty allowed attrs when no config file, got %v", allowed)
+	}
+}
+
 func TestSuggestEventNameCorrection(t *testing.T) {
 	// Misspelled event name must be corrected, not just the separator.
 	r := hasCode(t, lintString(t, config{}, `<div data-on-clik="@post('/x')"></div>`, "html"), "UNKNOWN_ATTR_TYPO")

@@ -44,12 +44,14 @@ var version = "0.10.2"
 const updateCheckTimeout = 2 * time.Second
 
 type config struct {
-	root       string
-	recursive  bool
-	strict     bool
-	format     string
-	verbose    bool
-	onlyErrors bool
+	root         string
+	recursive    bool
+	strict       bool
+	format       string
+	verbose      bool
+	onlyErrors   bool
+	configPath   string
+	allowedAttrs map[string]bool
 }
 
 func main() {
@@ -63,6 +65,10 @@ func main() {
 	flag.BoolVar(&cfg.strict, "s", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.BoolVar(&cfg.strict, "strict", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.StringVar(&cfg.format, "format", "text", "Output format: text or json")
+
+	// --config loads a .datastar-lint.yaml with an allowed attributes list
+	// of intentional custom data-* attributes (read by app JS, not Datastar).
+	flag.StringVar(&cfg.configPath, "config", "", "Path to .datastar-lint.yaml (auto-discovered if empty)")
 
 	// --ext is kept for backward compat but silently ignored — each analyzer
 	// declares its own file extensions via FileExtensions().
@@ -108,6 +114,11 @@ func main() {
 	if len(args) > 0 {
 		cfg.root = args[0]
 	}
+
+	// Load project config: an allowed attributes list of intentional
+	// custom data-* attributes (e.g. data-tool, data-doc-id) so they are not
+	// flagged as UNKNOWN_ATTR.
+	cfg.allowedAttrs = loadAllowedAttrs(cfg.root, cfg.configPath)
 
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)

@@ -68,6 +68,9 @@ datastar-lint -r --analyzers typescript ./src/
 
 # Strict mode: Pro-only attributes become errors
 datastar-lint -r -s ./web/
+
+# With custom attribute config
+datastar-lint -r --config .datastar-lint.yaml ./src/
 ```
 
 Run `datastar-lint --version` to print the linter version. Exit code is `0` on clean, `1` on issues.
@@ -96,6 +99,23 @@ Run `datastar-lint --version` to print the linter version. Exit code is `0` on c
 - **`--update`** — Download and atomically replace the current binary with the latest release. Requires write access to the executable directory.
 
 On every run, `datastar-lint` silently checks for a newer version (with a 2 second timeout). If found, a notice is printed to stderr before the lint output. Use `--update` to apply it.
+
+### Configuration file
+
+To suppress warnings for intentional custom `data-*` attributes (e.g., `data-tool`, `data-doc-id`), create a `.datastar-lint.yaml` in your project root:
+
+```yaml
+# .datastar-lint.yaml
+attributes:
+  allowed:
+    - data-tool
+    - data-doc-id
+    - data-app-state
+```
+
+The linter auto-discovers the file by walking up from the target directory. Pass `--config <path>` to use an explicit path. The built-in `knownAttrs` remain the default — the config only *adds* to them.
+
+> The UNKNOWN_ATTR warning says "If this is an intentional custom attribute (not Datastar), add it to .datastar-lint.yaml". This gives LLMs and humans a clear action, but the conditional ("if intentional") makes it explicit that typos and mistakes should be corrected, not silenced. UNKNOWN_ATTR_TYPO (detected misspelling) never mentions the config file — it only suggests the correction.
 
 ## What it catches
 
