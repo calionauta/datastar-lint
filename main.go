@@ -124,6 +124,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)
 	}
 
+	fmt.Fprintf(os.Stderr, "datastar-lint v%s\n", version)
+
 	// Check for newer version in a goroutine so linting is never blocked.
 	updateCh := make(chan string, 1)
 	go func() {
