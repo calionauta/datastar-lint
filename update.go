@@ -145,7 +145,11 @@ func SelfUpdate() error {
 	}
 
 	// Atomically replace the running binary.
-	return atomicReplace(bin)
+	if err := atomicReplace(bin); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Updated to datastar-lint %s\n", strings.TrimPrefix(latestTag, "v"))
+	return nil
 }
 
 // SelfUpdateFromURL is like SelfUpdate but uses custom URLs for API and
@@ -181,7 +185,11 @@ func SelfUpdateFromURL(apiURL, downloadBaseURL string, timeout time.Duration) er
 		return fmt.Errorf("download: %w", err)
 	}
 
-	return atomicReplace(bin)
+	if err := atomicReplace(bin); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Updated to datastar-lint %s\n", strings.TrimPrefix(latestTag, "v"))
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +319,9 @@ func downloadBinaryFromURL(url string, client *http.Client) ([]byte, error) {
 	}
 	defer gzr.Close()
 
+	// Archive name for the binary inside the tar.gz (set by GoReleaser).
+	const binName = "datastar-lint"
+
 	tr := tar.NewReader(gzr)
 	for {
 		hdr, err := tr.Next()
@@ -321,8 +332,7 @@ func downloadBinaryFromURL(url string, client *http.Client) ([]byte, error) {
 			return nil, fmt.Errorf("tar: %w", err)
 		}
 
-		// The archive contains a single executable — no directory entries.
-		if hdr.Typeflag != tar.TypeReg {
+		if hdr.Typeflag != tar.TypeReg || hdr.Name != binName {
 			continue
 		}
 
@@ -394,6 +404,5 @@ func atomicReplace(newBin []byte) error {
 	// Clean up backup.
 	os.Remove(backupPath)
 
-	fmt.Fprintf(os.Stderr, "Updated to datastar-lint %s\n", version)
 	return nil
 }
