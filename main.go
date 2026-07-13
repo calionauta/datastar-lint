@@ -37,7 +37,7 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.11.0"
+var version = "0.11.1"
 
 // updateCheckTimeout is the HTTP timeout used for the automatic version
 // check on startup (kept short so linting is never delayed).
