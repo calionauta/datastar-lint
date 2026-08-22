@@ -39,9 +39,19 @@ import (
 // version is set at build time via ldflags or defaults to the latest tagged release.
 var version = "0.11.1"
 
+// datastarTested is the latest Datastar release the rule set was verified
+// against. Bump it when rules are reviewed after a Datastar release.
+const datastarTested = "v1.0.2"
+
 // updateCheckTimeout is the HTTP timeout used for the automatic version
 // check on startup (kept short so linting is never delayed).
 const updateCheckTimeout = 2 * time.Second
+
+// versionLine is the single source of truth for the tool's identity line,
+// printed by --version (stdout) and on every lint run (stderr).
+func versionLine() string {
+	return fmt.Sprintf("datastar-lint v%s (tested against Datastar %s)", version, datastarTested)
+}
 
 type config struct {
 	root         string
@@ -77,9 +87,9 @@ func main() {
 	flag.StringVar(&_extDeprecated, "ext", "", "Deprecated: analyzers control their own extensions")
 
 	var (
-		showVersion  bool
-		runUpdate    bool
-		checkUpdate  bool
+		showVersion bool
+		runUpdate   bool
+		checkUpdate bool
 	)
 	flag.BoolVar(&showVersion, "version", false, "Show version and exit")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "Verbose debug output")
@@ -91,7 +101,7 @@ func main() {
 
 	switch {
 	case showVersion:
-		fmt.Printf("datastar-lint v%s\n", version)
+		fmt.Println(versionLine())
 		os.Exit(0)
 	case runUpdate:
 		if err := SelfUpdate(); err != nil {
@@ -124,7 +134,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)
 	}
 
-	fmt.Fprintf(os.Stderr, "datastar-lint v%s\n", version)
+	fmt.Fprintln(os.Stderr, versionLine())
 
 	// Check for newer version in a goroutine so linting is never blocked.
 	updateCh := make(chan string, 1)

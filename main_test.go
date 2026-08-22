@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -291,6 +292,12 @@ func TestCleanFile(t *testing.T) {
 func TestVersionConstant(t *testing.T) {
 	if version == "" {
 		t.Error("version should not be empty")
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(datastarTested) {
+		t.Errorf("datastarTested %q should be a semver tag like v1.0.2", datastarTested)
+	}
+	if !strings.Contains(versionLine(), datastarTested) || !strings.Contains(versionLine(), version) {
+		t.Errorf("versionLine() %q should include both versions", versionLine())
 	}
 }
 
