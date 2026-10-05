@@ -1,3 +1,6 @@
 /datastar-lint
 .commandcode/
 stelow.json
+
+# macOS
+.DS_Store

@@ -4,7 +4,7 @@ A multi-language linter for [Datastar](https://data-star.dev). Validates HTML at
 
 Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`PatchSignals` calls on the backend. This tool catches typos, missing selectors, and misconfigurations at build time — not in the browser console.
 
-> **Version compatibility**: Verified against Datastar **v1.0.2** (run `datastar-lint --version` for the exact value — it is the authoritative source). The rules check stable DOM-level and Datastar-API-level patterns, and the full rule set is covered by automated tests that run in CI on every push. Minor/patch releases of Datastar (Y.Z) should not affect correctness.
+> **Version compatibility**: Verified against Datastar **v1.0.4** (run `datastar-lint --version` for the exact value — it is the authoritative source). The rules check stable DOM-level and Datastar-API-level patterns, and the full rule set is covered by automated tests that run in CI on every push. Minor/patch releases of Datastar (Y.Z) should not affect correctness.
 
 ## Contents
 
@@ -16,6 +16,7 @@ Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`Pa
 - [What it catches](#what-it-catches)
 - [Enabling analyzers](#enabling-analyzers)
 - [Architecture](#architecture)
+- [Go SDK API shape (read before adding a Go rule)](#go-sdk-api-shape)
 - [Where to run it](#where-to-run-it)
 - [License](#license)
 
@@ -135,8 +136,8 @@ The linter auto-discovers the file by walking up from the target directory. Pass
 
 ### Go SDK checks
 
-- **`PATCH_ELEMENTS_NO_SELECTOR`** — `PatchElements()` / `PatchElementTempl()` / `PatchElementf()` / `PatchElementGostar()` / `RemoveElement()` / `RemoveElementf()` / `RemoveElementByID()` called without `WithSelector`/`WithSelectorID` or with empty/omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound`. Severity: warning.
-- **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: warning.
+- **`PATCH_ELEMENTS_NO_SELECTOR`** — `PatchElements()` / `PatchElementTempl()` / `PatchElementGostar()` / `RemoveElement()` called without `WithSelector`/`WithSelectorID`, or with an omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound` and the update silently never lands. Severity: **error** (it fails a build). `RemoveElementByID()` and `RemoveElementf()` are exempt: the former takes the bare id and prefixes `#` itself, the latter carries its selector in the format string. Both take no options, so neither can be missing one.
+- **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: **error**.
 - **`MERGE_SIGNALS_NIL`** — `MarshalAndPatchSignals(nil)` produces `"null"` on the wire, overwriting all signals. Severity: hint.
 - **`PATCH_ELEMENTF_FORMAT`** — `PatchElementf()` format string has `%` verbs that may not match the number of value arguments. Severity: hint.
 - **`GO_PARSE_ERROR`** — The Go file could not be parsed. Severity: error.
@@ -182,6 +183,31 @@ datastar-lint -r --analyzers html,go ./                   # + Go SDK checks
 datastar-lint -r --analyzers html,typescript ./src/       # + TS SDK checks
 datastar-lint -r --analyzers html,go,python,typescript ./ # everything
 ```
+
+## Go SDK API shape
+
+**The Datastar Go SDK is method-only.** Every patch call is a method on
+`*datastar.ServerSentEventGenerator`, obtained from `datastar.NewSSE(w, r)`:
+
+```go
+sse := datastar.NewSSE(w, r)
+sse.PatchElements(`<div id="x">x</div>`, datastar.WithSelector("#x"))
+sse.RemoveElement("#temporary")
+sse.MarshalAndPatchSignals(map[string]any{"k": "v"})
+```
+
+There is **no** package-level `datastar.PatchElements(sse, ...)` — and there has
+not been one in any 1.x release. Writing the package form does not compile:
+
+```
+./x.go:11:15: undefined: datastar.PatchElements
+```
+
+Only the *option constructors* are package-level (`datastar.WithSelector`,
+`datastar.WithSelectorID`, `datastar.WithModeAppend`, …). The Go analyzer
+therefore matches the method form, gated on the file importing the SDK. Three
+of these methods take no options at all, so they cannot be missing a selector:
+`PatchElementf`, `RemoveElementf`, `RemoveElementByID`.
 
 ## Architecture
 

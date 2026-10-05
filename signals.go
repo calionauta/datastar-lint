@@ -107,7 +107,7 @@ func checkUnescapedSingleQuotes(val, attrName string, n *html.Node, a html.Attri
 	// trustworthy and the parser already decoded &#39; into ', so we check val
 	// directly (a decoded ' in a double-quoted value is a real break).
 	if curSrc != nil {
-		if broken, single, ok := curSrc.rawAttrBrokenQuote(tag, attrName); ok && single {
+		if broken, single, ok := curSrc.rawAttrBrokenQuote(n, attrName); ok && single {
 			if broken {
 				reportUnescapedQuotes(n, a, attrName, path, tag, results)
 			}

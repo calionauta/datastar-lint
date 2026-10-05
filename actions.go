@@ -14,8 +14,10 @@ func checkActions(val string, n *html.Node, a html.Attribute, path, tag string, 
 	}
 	line, col := getAttrPosition(n, a)
 
-	// Match @get(...), @post(...), @put(...), @patch(...), @delete(...)
-	actionRe := regexp.MustCompile(`@(get|post|put|patch|delete|peek|setAll|toggleAll|clipboard|fit|intl)\(`)
+	// Match the Datastar action functions. @query is v1.0.4+. Keeping this list
+	// current matters: an action missing here falls through to the "no action
+	// matched" branch, which silently skips the URL-format and method checks.
+	actionRe := regexp.MustCompile(`@(get|post|put|patch|delete|query|peek|setAll|toggleAll|clipboard|fit|intl)\(`)
 	matches := actionRe.FindAllStringSubmatch(val, -1)
 
 	if len(matches) == 0 {
@@ -53,8 +55,9 @@ func checkActions(val string, n *html.Node, a html.Attribute, path, tag string, 
 		return
 	}
 
-	// Check action URL format.
-	urlRe := regexp.MustCompile(`(get|post|put|patch|delete)\(['"]([^'"]+)['"]`)
+	// Check action URL format. One regex per method set so @query (v1.0.4+) is
+	// covered by the same rooted-URL rule as the HTTP methods.
+	urlRe := regexp.MustCompile(`(get|post|put|patch|delete|query)\(['"]([^'"]+)['"]`)
 	urlMatches := urlRe.FindAllStringSubmatch(val, -1)
 	for _, m := range urlMatches {
 		action := m[1]

@@ -37,11 +37,11 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.11.1"
+var version = "0.12.0"
 
 // datastarTested is the latest Datastar release the rule set was verified
 // against. Bump it when rules are reviewed after a Datastar release.
-const datastarTested = "v1.0.2"
+const datastarTested = "v1.0.4"
 
 // updateCheckTimeout is the HTTP timeout used for the automatic version
 // check on startup (kept short so linting is never delayed).

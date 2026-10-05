@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// datastarImportPath is the Go SDK's import path. The analyzer keys its
+// method-form detection on the file importing this, since the SDK exposes no
+// package-level patch functions to match on (see isSSEPkg).
+const datastarImportPath = "github.com/starfederation/datastar-go/datastar"
+
 func init() {
 	RegisterAnalyzer(GoAnalyzer{})
 }
@@ -33,6 +38,9 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 
 	imports := buildImportMap(f.Imports)
 	sseAliases := sseImportAliases(imports)
+	// The SDK is method-only, so the receiver-name heuristic in isSSEPkg is
+	// only sound when the file actually imports the SDK.
+	hasSDKImport := importsDatastar(imports)
 
 	var results []lintResult
 
@@ -42,8 +50,8 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 			return true
 		}
 
-		funcName, pkgName := resolveCall(call)
-		isSSE := isSSEPkg(pkgName, sseAliases)
+		funcName, recvName := resolveCall(call)
+		isSSE := isSSEMethodCall(funcName, recvName, sseAliases, hasSDKImport)
 
 		// Check: MarshalAndPatchSignals(nil) — run for ANY qualified call,
 		// not just patch functions.
@@ -83,11 +91,19 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 			return true
 		}
 
+		// RemoveElementByID takes the bare id and does not need a WithSelector
+		// option — the SDK prefixes "#" itself. Flagging it was a false positive.
+		// RemoveElementf takes a selector/format string (and no options, per the
+		// SDK signature), so its selector is present by construction.
+		if funcName == "RemoveElementByID" || funcName == "RemoveElementf" {
+			return true
+		}
+
 		if funcName == "RemoveElement" {
 			if len(call.Args) == 0 {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
-					Severity:   sevWarning,
+					Severity:   sevError,
 					File:       path,
 					Line:       pos.Line,
 					Col:        pos.Column,
@@ -98,7 +114,7 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 			} else if isEmptyRemoveElementArg(call) {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
-					Severity:   sevWarning,
+					Severity:   sevError,
 					File:       path,
 					Line:       pos.Line,
 					Col:        pos.Column,
@@ -122,24 +138,24 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 			if !hasSelectorArg(call, sseAliases) {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
-					Severity:   sevWarning,
+					Severity:   sevError,
 					File:       path,
 					Line:       pos.Line,
 					Col:        pos.Column,
 					Code:       "PATCH_ELEMENTS_NO_SELECTOR",
-					Message:    fmt.Sprintf("%s() called without WithSelector/WithSelectorID — client has no merge anchor", qualifiedCall(pkgName, funcName)),
+					Message:    fmt.Sprintf("%s() called without WithSelector/WithSelectorID — client has no merge anchor", qualifiedCall(recvName, funcName)),
 					Suggestion: "Add sdk.WithSelector(\"#id\") or sdk.WithSelectorID(\"id\") among the arguments.",
 				})
 			}
 			if isEmptySelectorArg(call) {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
-					Severity:   sevWarning,
+					Severity:   sevError,
 					File:       path,
 					Line:       pos.Line,
 					Col:        pos.Column,
 					Code:       "PATCH_SELECTOR_EMPTY",
-					Message:    fmt.Sprintf("%s() called with empty selector string — silently dropped by SDK", qualifiedCall(pkgName, funcName)),
+					Message:    fmt.Sprintf("%s() called with empty selector string — silently dropped by SDK", qualifiedCall(recvName, funcName)),
 					Suggestion: "Pass a non-empty selector: WithSelector(\"#actual-id\").",
 				})
 			}
@@ -183,7 +199,15 @@ func sseImportAliases(imports map[string]string) map[string]bool {
 
 // --------------- Call resolution ---------------
 
-func resolveCall(call *ast.CallExpr) (funcName, pkgName string) {
+// resolveCall returns the called function's name and, for a qualified call, the
+// receiver expression's identifier.
+//
+// `pkgName` is a misnomer kept for call-site compatibility: for
+// `datastar.PatchElements(...)` it is the package name, but for the method form
+// `sse.PatchElements(...)` — the ONLY form the v1.x SDK exposes — it is the
+// RECEIVER VARIABLE's name. Callers must therefore not assume it names a
+// package; use isSSEPkg to decide whether the call is a Datastar SDK call.
+func resolveCall(call *ast.CallExpr) (funcName, recvName string) {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
 		if ident, ok := fun.X.(*ast.Ident); ok {
@@ -215,11 +239,64 @@ func isPatchFunc(name string) bool {
 	return false
 }
 
-func isSSEPkg(pkgName string, aliases map[string]bool) bool {
-	if pkgName == "" {
+// isSSEPkg reports whether a call is a Datastar SDK call.
+//
+// The SDK is method-only: `sse.PatchElements(...)` where the receiver is a
+// `*datastar.ServerSentEventGenerator` from `datastar.NewSSE(w, r)`. There has
+// never been a package-level `datastar.PatchElements` in any 1.x release, so the
+// previous alias-only matching was dead code that found nothing in practice.
+//
+// Without go/types we cannot prove the receiver's type, so the decision rests on
+// two things that are checkable from the AST alone:
+//
+//  1. The file imports the SDK (hasSDKImport). Without this, nothing is flagged
+//     — a project that does not use Datastar cannot get findings from this.
+//  2. The method name is one the SDK is the sole provider of (isPatchFunc,
+//     plus the signals methods handled separately).
+//
+// Given a file that imports the SDK, a method with one of these names is a
+// Datastar call in every realistic program; the converse (another type in the
+// same file exposing `PatchElements`) is possible but pathological, and the
+// alternative is the false-negative this function replaced.
+func isSSEPkg(name string, aliases map[string]bool) bool {
+	return name != "" && aliases[name]
+}
+
+// isSSEMethodCall reports whether a call to `funcName` on receiver `recvName`
+// should be validated as a Datastar SDK call.
+func isSSEMethodCall(funcName, recvName string, aliases map[string]bool, hasSDKImport bool) bool {
+	if recvName == "" {
+		return false
+	}
+	if isSSEPkg(recvName, aliases) {
 		return true
 	}
-	return aliases[pkgName]
+	if !hasSDKImport {
+		return false
+	}
+	return isPatchFunc(funcName) || isSignalsFunc(funcName)
+}
+
+// isSignalsFunc reports whether name is one of the SDK's signals methods (no
+// selector concept, but still method-form and still worth validating).
+func isSignalsFunc(name string) bool {
+	switch name {
+	case "MarshalAndPatchSignals", "MarshalAndPatchSignalsIfMissing",
+		"PatchSignals", "PatchSignalsIfMissingRaw":
+		return true
+	}
+	return false
+}
+
+// importsDatastar reports whether the parsed file imports the Datastar SDK at
+// all, under any alias.
+func importsDatastar(imports map[string]string) bool {
+	for _, path := range imports {
+		if path == datastarImportPath {
+			return true
+		}
+	}
+	return false
 }
 
 func isSelectorFunc(name string) bool {
@@ -232,7 +309,22 @@ func isSelectorFunc(name string) bool {
 
 // --------------- Selector detection (non-RemoveElement) ---------------
 
+// forwardsVariadicOptions reports whether the call forwards an options slice
+// with `...` (e.g. `sse.PatchElements(html, opts...)`).
+//
+// A helper that takes `opts ...PatchElementOption` and forwards them is the
+// documented way to wrap the SDK: the selector is supplied by the CALLER and is
+// invisible here, so the callee must not be reported as missing one. The
+// ellipsis is the syntactic signal that the argument list is not complete at
+// this site.
+func forwardsVariadicOptions(call *ast.CallExpr) bool {
+	return call.Ellipsis.IsValid()
+}
+
 func hasSelectorArg(call *ast.CallExpr, sseAliases map[string]bool) bool {
+	if forwardsVariadicOptions(call) {
+		return true
+	}
 	for _, arg := range call.Args {
 		if isSelectorCall(arg, sseAliases) {
 			return true

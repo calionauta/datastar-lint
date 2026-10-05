@@ -8,7 +8,24 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
+
+// findElement returns the first element node with the given tag name, in
+// document order, or nil if there is none. Used by tests that exercise
+// node-keyed helpers (which resolve positions per element, not per tag string).
+func findElement(n *html.Node, tag string) *html.Node {
+	if n.Type == html.ElementNode && n.Data == tag {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElement(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
+}
 
 // writeTmp writes content to a temp file with the given extension and returns
 // the path. The caller is responsible for cleanup via t.Cleanup.
@@ -379,7 +396,17 @@ func TestRawAttrBrokenQuote(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := newSource(b)
-			broken, single, ok := s.rawAttrBrokenQuote("div", "data-signals")
+			// rawAttrBrokenQuote is keyed by node so it can resolve each
+			// element's own anchor; parse the case and hand it the element.
+			doc, err := html.Parse(bytes.NewReader(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := findElement(doc, "div")
+			if n == nil {
+				t.Fatal("no <div> parsed from case")
+			}
+			broken, single, ok := s.rawAttrBrokenQuote(n, "data-signals")
 			if ok != tc.ok || single != tc.single || broken != tc.broken {
 				t.Errorf("rawAttrBrokenQuote = (broken=%v, single=%v, ok=%v), want (broken=%v, single=%v, ok=%v)",
 					broken, single, ok, tc.broken, tc.single, tc.ok)
@@ -449,10 +476,10 @@ func TestE2EGoBad(t *testing.T) {
 	writeFile(t, dir+"/bad.go", `package p
 import "github.com/starfederation/datastar-go/datastar"
 func handler(sse *datastar.ServerSentEventGenerator) {
-	datastar.PatchElements(sse, "<div></div>")
-	datastar.PatchElements(sse, "<div></div>", datastar.WithSelector(""))
-	datastar.PatchElementTempl(sse, nil)
-	datastar.MarshalAndPatchSignals(nil)
+	sse.PatchElements("<div></div>")
+	sse.PatchElements("<div></div>", datastar.WithSelector(""))
+	sse.PatchElementTempl(nil)
+	sse.MarshalAndPatchSignals(nil)
 }
 `)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true})
@@ -469,8 +496,8 @@ func TestE2EGoGood(t *testing.T) {
 	writeFile(t, dir+"/good.go", `package p
 import "github.com/starfederation/datastar-go/datastar"
 func handler(sse *datastar.ServerSentEventGenerator) {
-	datastar.PatchElements(sse, "<div id='x'>x</div>", datastar.WithSelector("#x"))
-	datastar.PatchElementTempl(sse, nil, datastar.WithSelectorID("x"))
+	sse.PatchElements("<div id='x'>x</div>", datastar.WithSelector("#x"))
+	sse.PatchElementTempl(nil, datastar.WithSelectorID("x"))
 	datastar.MarshalAndPatchSignals(map[string]any{"key": "val"})
 }
 `)
@@ -599,7 +626,7 @@ func TestE2EMultiAnalyzer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir+"/bad.go", `package p
 import "github.com/starfederation/datastar-go/datastar"
-func handler(sse *datastar.ServerSentEventGenerator) { datastar.PatchElements(sse, "") }
+func handler(sse *datastar.ServerSentEventGenerator) { sse.PatchElements("") }
 `)
 	writeFile(t, dir+"/bad.html", `<div data-foobar="$x"></div>`)
 	results := run(config{root: dir, recursive: true}, map[string]bool{"go": true, "html": true})
@@ -612,7 +639,7 @@ func TestE2ECrossReference(t *testing.T) {
 	writeFile(t, dir+"/handler.go", `package p
 import "github.com/starfederation/datastar-go/datastar"
 func handler(sse *datastar.ServerSentEventGenerator) {
-	datastar.PatchElements(sse, "", datastar.WithSelector("#orphan"))
+	sse.PatchElements("", datastar.WithSelector("#orphan"))
 }
 `)
 	writeFile(t, dir+"/template.templ", `<div id="existing">content</div>`)
@@ -624,7 +651,7 @@ func TestE2EJSONOutput(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir+"/bad.go", `package p
 import "github.com/starfederation/datastar-go/datastar"
-func handler(sse *datastar.ServerSentEventGenerator) { datastar.PatchElements(sse, "") }
+func handler(sse *datastar.ServerSentEventGenerator) { sse.PatchElements("") }
 `)
 	results := run(config{root: dir, recursive: true, format: "json"}, map[string]bool{"go": true})
 	out, err := json.MarshalIndent(results, "", "  ")
@@ -634,15 +661,18 @@ func handler(sse *datastar.ServerSentEventGenerator) { datastar.PatchElements(ss
 	if !json.Valid(out) {
 		t.Error("JSON output is not valid JSON")
 	}
-	if !strings.Contains(string(out), "\"severity\": \"WARN\"") {
-		t.Errorf("JSON should contain WARN severity, got:\n%s", out)
+	// A missing selector is a defect (the client throws
+	// PatchElementsNoTargetsFound), so it must serialize as ERROR. A WARN can
+	// never set the exit code, which made this check unenforceable.
+	if !strings.Contains(string(out), "\"severity\": \"ERROR\"") {
+		t.Errorf("JSON should contain ERROR severity, got:\n%s", out)
 	}
 }
 
 // --------------- Go analyzer tests ---------------
 
 func TestGoPatchNoSelector(t *testing.T) {
-	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\") }"
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\") }"
 	results := lintString(t, config{}, src, "go", "go")
 	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r == nil {
 		t.Errorf("expected PATCH_ELEMENTS_NO_SELECTOR; got %v", codes(results))
@@ -650,7 +680,7 @@ func TestGoPatchNoSelector(t *testing.T) {
 }
 
 func TestGoPatchWithSelectorOK(t *testing.T) {
-	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#list\")) }"
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"#list\")) }"
 	results := lintString(t, config{}, src, "go", "go")
 	if r := hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR"); r != nil {
 		t.Errorf("expected no PATCH_ELEMENTS_NO_SELECTOR when selector given; got %v", codes(results))
@@ -658,7 +688,7 @@ func TestGoPatchWithSelectorOK(t *testing.T) {
 }
 
 func TestGoEmptySelector(t *testing.T) {
-	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"\")) }"
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"\")) }"
 	results := lintString(t, config{}, src, "go", "go")
 	if r := hasCode(t, results, "PATCH_SELECTOR_EMPTY"); r == nil {
 		t.Errorf("expected PATCH_SELECTOR_EMPTY; got %v", codes(results))
@@ -707,7 +737,7 @@ func TestGoPatchElementGostarNoSelector(t *testing.T) {
 }
 
 func TestGoMarhalSignalsNil(t *testing.T) {
-	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.MarshalAndPatchSignals(nil) }"
+	src := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { sse.MarshalAndPatchSignals(nil) }"
 	results := lintString(t, config{}, src, "go", "go")
 	if r := hasCode(t, results, "MERGE_SIGNALS_NIL"); r == nil {
 		t.Errorf("expected MERGE_SIGNALS_NIL; got %v", codes(results))
@@ -782,7 +812,7 @@ func TestTSPatchEmptySelector(t *testing.T) {
 // --------------- Cross-reference tests ---------------
 
 func TestCrossRefOrphanSelector(t *testing.T) {
-	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#orphan-id\")) }"
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"#orphan-id\")) }"
 	htmlSrc := "<div id=\"existing-id\">hello</div>"
 
 	dir := t.TempDir()
@@ -803,7 +833,7 @@ func TestCrossRefOrphanSelector(t *testing.T) {
 }
 
 func TestCrossRefNoOrphan(t *testing.T) {
-	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#existing-id\")) }"
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"#existing-id\")) }"
 	htmlSrc := "<div id=\"existing-id\">hello</div>"
 
 	dir := t.TempDir()
@@ -823,7 +853,7 @@ func TestCrossRefNoOrphan(t *testing.T) {
 }
 
 func TestCrossRefWithSelectorID(t *testing.T) {
-	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelectorID(\"existing-id\")) }"
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelectorID(\"existing-id\")) }"
 	htmlSrc := "<div id=\"existing-id\">hello</div>"
 
 	dir := t.TempDir()
@@ -844,7 +874,7 @@ func TestCrossRefWithSelectorID(t *testing.T) {
 
 func TestCrossRefTemplDynamicID(t *testing.T) {
 	// Templ id={expr} should not produce orphan warnings.
-	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"#some-dynamic-ref\")) }"
+	goSrc := "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"#some-dynamic-ref\")) }"
 	htmlSrc := "<div id={ .ID }>dynamic</div>"
 
 	dir := t.TempDir()
@@ -1091,9 +1121,9 @@ func TestAllDocumentedRules(t *testing.T) {
 		{"ON_RESIZE_NO_EVENT", `<div data-on:resize="$x = 1">content</div>`, "data-on:resize (fires on window only)", "html", "html"},
 		{"ON_HASHCHANGE_NO_EVENT", `<div data-on:hashchange="$x = 1">content</div>`, "data-on:hashchange (fires on window only)", "html", "html"},
 		// Go rules (using interpreted strings with \n for newlines)
-		{"PATCH_ELEMENTS_NO_SELECTOR", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\") }", "Go: missing selector", "go", "go"},
-		{"PATCH_SELECTOR_EMPTY", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.PatchElements(s, \"\", datastar.WithSelector(\"\")) }", "Go: empty selector", "go", "go"},
-		{"MERGE_SIGNALS_NIL", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { datastar.MarshalAndPatchSignals(nil) }", "Go: nil signals", "go", "go"},
+		{"PATCH_ELEMENTS_NO_SELECTOR", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\") }", "Go: missing selector", "go", "go"},
+		{"PATCH_SELECTOR_EMPTY", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { s.PatchElements(\"\", datastar.WithSelector(\"\")) }", "Go: empty selector", "go", "go"},
+		{"MERGE_SIGNALS_NIL", "package p\n\nimport \"github.com/starfederation/datastar-go/datastar\"\n\nfunc f(s *datastar.ServerSentEventGenerator) { sse.MarshalAndPatchSignals(nil) }", "Go: nil signals", "go", "go"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
