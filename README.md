@@ -262,3 +262,8 @@ so enable the others explicitly with `--analyzers` (comma-separated):
 ## License
 
 MIT.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Note that `PATCH_ELEMENTS_NO_SELECTOR` and
+`PATCH_SELECTOR_EMPTY` became **errors** in v0.12.0 — they now fail a build.
