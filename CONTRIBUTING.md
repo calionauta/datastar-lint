@@ -75,8 +75,14 @@ Also add an entry in `TestAllDocumentedRules` (regression net).
 
 ### 3. Update testdata
 
-- `testdata/bad.html` — add a bad case
-- `testdata/good.html` — add a correct case
+- `testdata/bad.<ext>` — add a bad case (its inline comment names the code)
+- `testdata/good.<ext>` — add a correct case
+
+These ARE loaded: `testdata_test.go` lints each fixture and asserts the codes
+its comments claim, so a fixture that stops describing shipped behaviour fails
+the suite. Keep the Go fixtures on the real API shape — the SDK is
+method-only (`sse.PatchElements(...)`); a package-level
+`datastar.PatchElements(sse, ...)` does not exist and does not compile.
 
 ### 4. Document in `README.md`
 
