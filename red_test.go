@@ -389,3 +389,70 @@ func handler(sse *datastar.ServerSentEventGenerator) error {
 	results := lintString(t, config{}, src, "go", "go")
 	assertHasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR")
 }
+
+// ---------------------------------------------------------------------------
+// 7. Multiple paths on the command line
+// ---------------------------------------------------------------------------
+
+// TestRunLintsEveryRoot pins that every path passed is linted.
+//
+// red: `run()` held a single `cfg.root` and main.go assigned only `args[0]`, so
+// every path after the first was silently dropped. `datastar-lint ./features
+// ./internal` linted ./features and reported "No issues" — including when the
+// violation was in ./internal. Passed to CI as two directories, the gate looked
+// like it covered both and covered one.
+func TestRunLintsEveryRoot(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	writeFile(t, dirA+"/a.go", `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	sse.PatchElements("<div>a</div>")
+}
+`)
+	// dirB carries the violation; dirA is only there so the FIRST path is
+	// clean and a "first path only" implementation reports nothing.
+	writeFile(t, dirB+"/b.go", `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	sse.PatchElements("<div>b</div>")
+}
+`)
+	results := run(config{roots: []string{dirA, dirB}, recursive: true}, map[string]bool{"go": true})
+	if hasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR") == nil {
+		t.Errorf("a path after the first was not linted — findings from %s were dropped; got %v", dirB, codes(results))
+	}
+}
+
+// TestRunLintsSecondRootWhenFirstIsClean is the sharpest form: the violation is
+// ONLY in the second root, so "no findings at all" is unambiguous evidence the
+// second path was skipped.
+func TestRunLintsSecondRootWhenFirstIsClean(t *testing.T) {
+	clean := t.TempDir()
+	writeFile(t, clean+"/clean.go", `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	sse.PatchElements("<div id='x'>x</div>", datastar.WithSelector("#x"))
+}
+`)
+	bad := t.TempDir()
+	writeFile(t, bad+"/bad.go", `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	sse.PatchElements("<div>y</div>")
+}
+`)
+	results := run(config{roots: []string{clean, bad}, recursive: true}, map[string]bool{"go": true})
+	if len(results) == 0 {
+		t.Fatal("linting [cleanDir, badDir] returned no findings — only the first root was walked")
+	}
+	assertHasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR")
+}

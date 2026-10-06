@@ -54,7 +54,14 @@ func versionLine() string {
 }
 
 type config struct {
-	root         string
+	// root is the single primary path. Kept for the many call sites that pass
+	// one; `roots` is the authoritative list and is derived from it when empty.
+	root string
+	// roots holds EVERY path given on the command line. A single `root`
+	// silently dropped all but the first argument, so
+	// `datastar-lint ./features ./internal` linted only ./features and reported
+	// "No issues" when the violation was in ./internal.
+	roots        []string
 	recursive    bool
 	strict       bool
 	format       string
@@ -62,6 +69,30 @@ type config struct {
 	onlyErrors   bool
 	configPath   string
 	allowedAttrs map[string]bool
+}
+
+// paths returns every path to lint, in order, deduplicated. `roots` wins when
+// set; otherwise the single `root` is used (so a one-path call site needs no
+// change), falling back to "." for an unset config.
+func (c config) paths() []string {
+	if len(c.roots) > 0 {
+		seen := make(map[string]bool, len(c.roots))
+		out := make([]string, 0, len(c.roots))
+		for _, r := range c.roots {
+			if r == "" || seen[r] {
+				continue
+			}
+			seen[r] = true
+			out = append(out, r)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if c.root == "" {
+		return []string{"."}
+	}
+	return []string{c.root}
 }
 
 func main() {
@@ -120,9 +151,11 @@ func main() {
 	}
 
 	args := flag.Args()
-	cfg.root = "."
+	cfg.roots = args
 	if len(args) > 0 {
 		cfg.root = args[0]
+	} else {
+		cfg.root = "."
 	}
 
 	// Load project config: an allowed attributes list of intentional
@@ -245,55 +278,63 @@ func main() {
 
 // run collects files for each active analyzer and dispatches linting.
 func run(cfg config, active map[string]bool) []lintResult {
-	info, err := os.Stat(cfg.root)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+	paths := cfg.paths()
 
 	var all []lintResult
 	var allFiles []string // accumulated for cross-reference
 
-	for _, a := range analyzers {
-		if !active[a.Name()] {
-			continue
+	for _, root := range paths {
+		info, err := os.Stat(root)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
 		}
 
-		exts := make(map[string]bool)
-		for _, ext := range a.FileExtensions() {
-			exts[ext] = true
-		}
-
-		var files []string
-		if info.IsDir() {
-			files = collectFiles(cfg.root, cfg.recursive, exts)
-		} else {
-			ext := strings.TrimPrefix(filepath.Ext(cfg.root), ".")
-			if exts[ext] {
-				files = []string{cfg.root}
+		for _, a := range analyzers {
+			if !active[a.Name()] {
+				continue
 			}
-		}
 
-		if len(files) == 0 {
-			extNames := make([]string, 0, len(exts))
-			for e := range exts {
-				extNames = append(extNames, "."+e)
+			exts := make(map[string]bool)
+			for _, ext := range a.FileExtensions() {
+				exts[ext] = true
 			}
-			fmt.Fprintf(os.Stderr, "warning: analyzer %q found no %s files\n", a.Name(), strings.Join(extNames, ", "))
-			continue
-		}
 
-		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "debug:   analyzer %q: %d file(s)\n", a.Name(), len(files))
-		}
+			var files []string
+			if info.IsDir() {
+				files = collectFiles(root, cfg.recursive, exts)
+			} else {
+				ext := strings.TrimPrefix(filepath.Ext(root), ".")
+				if exts[ext] {
+					files = []string{root}
+				}
+			}
 
-		for _, f := range files {
-			r := a.Lint(f, cfg)
-			all = append(all, r...)
+			if len(files) == 0 {
+				// Only warn for a single explicit path: a multi-path invocation
+				// routinely includes a tree with no .tsx (or no .go), and warning
+				// per analyzer per path is noise, not signal.
+				if len(paths) == 1 {
+					extNames := make([]string, 0, len(exts))
+					for e := range exts {
+						extNames = append(extNames, "."+e)
+					}
+					fmt.Fprintf(os.Stderr, "warning: analyzer %q found no %s files in %s\n", a.Name(), strings.Join(extNames, ", "), root)
+				}
+				continue
+			}
+
+			if cfg.verbose {
+				fmt.Fprintf(os.Stderr, "debug:   analyzer %q: %d file(s) in %s\n", a.Name(), len(files), root)
+			}
+
+			for _, f := range files {
+				r := a.Lint(f, cfg)
+				all = append(all, r...)
+			}
+			allFiles = append(allFiles, files...)
 		}
-		allFiles = append(allFiles, files...)
 	}
-
 	// Cross-reference: when both Go and HTML analyzers are active, check
 	// that WithSelector("#id") references exist as actual element ids.
 	if active["go"] && active["html"] {
