@@ -138,7 +138,7 @@ The linter auto-discovers the file by walking up from the target directory. Pass
 
 - **`PATCH_ELEMENTS_NO_SELECTOR`** — `PatchElements()` / `PatchElementTempl()` / `PatchElementGostar()` / `RemoveElement()` called without `WithSelector`/`WithSelectorID`, or with an omitted selector argument. Without a CSS selector the JS client throws `PatchElementsNoTargetsFound` and the update silently never lands. Severity: **error** (it fails a build). `RemoveElementByID()` and `RemoveElementf()` are exempt: the former takes the bare id and prefixes `#` itself, the latter carries its selector in the format string. Both take no options, so neither can be missing one.
 - **`PATCH_SELECTOR_EMPTY`** — `WithSelector("")` or `WithSelectorID("")` — empty string is silently dropped by the SDK. Severity: **error**.
-- **`MERGE_SIGNALS_NIL`** — `MarshalAndPatchSignals(nil)` produces `"null"` on the wire, overwriting all signals. Severity: hint.
+- **`MERGE_SIGNALS_NIL`** — `MarshalAndPatchSignals(nil)` or `MarshalAndPatchSignalsIfMissing(nil)` produces `"null"` on the wire, overwriting all client signals. (The `IfMissing` variant delegates to the base method, so it inherits the defect.) Severity: hint.
 - **`PATCH_ELEMENTF_FORMAT`** — `PatchElementf()` format string has `%` verbs that may not match the number of value arguments. Severity: hint.
 - **`GO_PARSE_ERROR`** — The Go file could not be parsed. Severity: error.
 

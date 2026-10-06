@@ -456,3 +456,41 @@ func handler(sse *datastar.ServerSentEventGenerator) {
 	}
 	assertHasCode(t, results, "PATCH_ELEMENTS_NO_SELECTOR")
 }
+
+// ---------------------------------------------------------------------------
+// 8. The same nil-signals defect, in the sibling methods
+// ---------------------------------------------------------------------------
+
+// TestMarshalAndPatchSignalsIfMissingNil pins the nil check on the sibling.
+//
+// red: only `MarshalAndPatchSignals` was checked. `MarshalAndPatchSignalsIfMissing`
+// delegates to it (signals-sugar.go: it calls MarshalAndPatchSignals with
+// WithOnlyIfMissing(true)), so `nil` marshals to `"null"` on the wire exactly the
+// same way — but the rule did not fire, so the defect shipped under a name that
+// looked covered.
+func TestMarshalAndPatchSignalsIfMissingNil(t *testing.T) {
+	src := `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	_ = sse.MarshalAndPatchSignalsIfMissing(nil)
+}
+`
+	results := lintString(t, config{}, src, "go", "go")
+	assertHasCode(t, results, "MERGE_SIGNALS_NIL")
+}
+
+// TestMarshalAndPatchSignalsIfMissingNonNilIsClean is the negative half.
+func TestMarshalAndPatchSignalsIfMissingNonNilIsClean(t *testing.T) {
+	src := `package p
+
+import "github.com/starfederation/datastar-go/datastar"
+
+func handler(sse *datastar.ServerSentEventGenerator) {
+	_ = sse.MarshalAndPatchSignalsIfMissing(map[string]any{"k": "v"})
+}
+`
+	results := lintString(t, config{}, src, "go", "go")
+	assertNoCode(t, results, "MERGE_SIGNALS_NIL")
+}

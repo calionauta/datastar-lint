@@ -53,9 +53,12 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 		funcName, recvName := resolveCall(call)
 		isSSE := isSSEMethodCall(funcName, recvName, sseAliases, hasSDKImport)
 
-		// Check: MarshalAndPatchSignals(nil) — run for ANY qualified call,
-		// not just patch functions.
-		if funcName == "MarshalAndPatchSignals" && isSSE {
+		// Check: MarshalAndPatchSignals(nil) / MarshalAndPatchSignalsIfMissing(nil)
+		// — run for ANY qualified call, not just patch functions. The IfMissing
+		// variant delegates to MarshalAndPatchSignals (signals-sugar.go), so nil
+		// marshals to "null" on the wire identically; checking only the base name
+		// left the sibling uncovered.
+		if isMarshalSignalsFunc(funcName) && isSSE {
 			if isNilArg(call) {
 				pos := fset.Position(call.Pos())
 				results = append(results, lintResult{
@@ -64,7 +67,7 @@ func (GoAnalyzer) Lint(path string, cfg config) []lintResult {
 					Line:       pos.Line,
 					Col:        pos.Column,
 					Code:       "MERGE_SIGNALS_NIL",
-					Message:    "MarshalAndPatchSignals(nil) produces null on the wire",
+					Message:    funcName + "(nil) produces null on the wire, wiping client signals",
 					Suggestion: "Pass an empty signals struct, a map, or a typed struct with fields.",
 				})
 			}
@@ -286,6 +289,14 @@ func isSignalsFunc(name string) bool {
 		return true
 	}
 	return false
+}
+
+// isMarshalSignalsFunc reports whether name takes `any` signals and marshals
+// them to JSON, so `nil` becomes the literal `"null"` on the wire.
+// MarshalAndPatchSignalsIfMissing delegates to MarshalAndPatchSignals with
+// WithOnlyIfMissing(true) and inherits the defect.
+func isMarshalSignalsFunc(name string) bool {
+	return name == "MarshalAndPatchSignals" || name == "MarshalAndPatchSignalsIfMissing"
 }
 
 // importsDatastar reports whether the parsed file imports the Datastar SDK at
