@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-10-08
+
+### Fixed
+
+- **Fallback version string lagged the release.** `go install @v0.13.0`
+  reported v0.12.0 and the update check nagged forever. The fallback now
+  tracks the latest tag; `go install @v0.13.1` identifies correctly.
+
 ## [0.13.0] - 2026-10-08
 
 ### Added
