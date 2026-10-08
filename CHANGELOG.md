@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-08
+
+### Added
+
+- **Opt-in `templ` analyzer** (`--analyzers templ`): flags Go template
+  expressions that render literally — `TEMPL_EXPR_IN_SCRIPT` (`{ name }`
+  inside markup-embedded `<script>`) and `TEMPL_EXPR_IN_ATTR` (inside
+  quoted attribute strings). Bare identifiers without braces, JS object
+  literals/calls, `${x}` template literals, and `templ script`
+  declarations stay quiet by design. Found wiring a real page whose
+  roster silently stayed empty.
+
 ## [0.12.0] - 2026-10-05
 
 ### Fixed

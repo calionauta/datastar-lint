@@ -84,6 +84,7 @@ Run `datastar-lint --version` to print the linter version and the Datastar relea
 | Go | `go` | `.go` | opt-in | Go (stdlib `go/parser`) |
 | Python | `python` | `.py` | opt-in | Python |
 | TypeScript | `typescript` | `.ts`, `.tsx` | opt-in | TypeScript/JavaScript |
+| Templ | `templ` | `.templ` | opt-in | Go template expressions leaking into markup JS/attrs |
 
 > **Two layers in a Go project:** `.templ` is Go's templating format. The
 > **HTML** analyzer lints the `data-*` attributes `.templ` emits (the markup
@@ -157,6 +158,21 @@ The linter auto-discovers the file by walking up from the target directory. Pass
 ### Cross-reference checks (when both `go` and `html` analyzers are active)
 
 - **`CROSSREF_ORPHAN_SELECTOR`** — A Go `WithSelector("#id")` references an element id that doesn't exist in any scanned `.templ`/`.html`/`.tsx`/`.jsx`/`.ts`/`.js` file. Severity: warning.
+
+### Templ-expression leakage (opt-in `templ` analyzer)
+
+The templ compiler never interpolates `{...}` inside `<script>` bodies or
+quoted attribute strings — both render literally, with no error. Datastar
+attributes are unaffected (bare identifiers without braces are valid
+expressions and never flagged), and `templ script` declarations (real
+Go+JS) are skipped. Call-shaped `{ f(x) }` is ambiguous with real JS
+blocks and left to human eyes; only bare identifier/path forms flag.
+
+- **`TEMPL_EXPR_IN_SCRIPT`** — `{ name }` inside a markup-embedded
+  `<script>` (external `src` files excluded). Severity: error.
+- **`TEMPL_EXPR_IN_ATTR`** — `{ name }` inside a quoted attribute value.
+  Drop the quotes (`attr={ expr }`) or move the value to a `data-*`
+  attribute. Severity: error.
 
 ### Forms
 
