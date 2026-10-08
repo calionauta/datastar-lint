@@ -494,3 +494,70 @@ func handler(sse *datastar.ServerSentEventGenerator) {
 	results := lintString(t, config{}, src, "go", "go")
 	assertNoCode(t, results, "MERGE_SIGNALS_NIL")
 }
+
+// ---------------------------------------------------------------------------
+// 9. Templ expressions render literally inside <script> and quoted attrs
+// ---------------------------------------------------------------------------
+
+// TestTemplExprInScriptIsFlagged pins the defect found wiring the room
+// demo (gogogo-template features/room): `var room = "{ roomID }";`
+// renders the braces literally because templ never interpolates script
+// bodies — the page silently joins the wrong room.
+//
+// red: no finding; the page loaded, no JS error, roster just stayed empty.
+func TestTemplExprInScriptIsFlagged(t *testing.T) {
+	src := `package room
+
+templ Page(roomID string) {
+	<script>
+		(function () {
+			var room = "{ roomID }";
+		})();
+	</script>
+}
+`
+	results := lintString(t, config{}, src, "templ", "templ")
+	assertHasCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
+}
+
+// TestTemplExprInQuotedAttrIsFlagged pins the sibling form: quoted
+// attribute strings are opaque to templ too.
+func TestTemplExprInQuotedAttrIsFlagged(t *testing.T) {
+	src := `package room
+
+templ Page(roomID string) {
+	<main data-room="{ roomID }"></main>
+}
+`
+	results := lintString(t, config{}, src, "templ", "templ")
+	assertHasCode(t, results, "TEMPL_EXPR_IN_ATTR")
+}
+
+// TestTemplLegitShapesStayQuiet pins the precision boundary: bare
+// identifiers without braces are valid JS/Datastar, object literals and
+// calls carry giveaway characters, `${x}` is a template literal,
+// `templ script` declarations really evaluate expressions, and example
+// code inside HTML comments is not code.
+func TestTemplLegitShapesStayQuiet(t *testing.T) {
+	src := `package room
+
+templ script hello(name string) {
+	console.log(name);
+	console.log({ roomID });
+}
+
+<!-- use data-room="{ roomID }" here -->
+
+templ Page(roomID string) {
+	<main data-room={ roomID } data-text="userName"></main>
+	<script>
+		var o = {a: 1};
+		var t = ` + "`${x}`" + `;
+		function f() { foo(); }
+	</script>
+}
+`
+	results := lintString(t, config{}, src, "templ", "templ")
+	assertNoCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
+	assertNoCode(t, results, "TEMPL_EXPR_IN_ATTR")
+}
