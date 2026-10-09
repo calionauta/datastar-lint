@@ -561,3 +561,39 @@ templ Page(roomID string) {
 	assertNoCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
 	assertNoCode(t, results, "TEMPL_EXPR_IN_ATTR")
 }
+
+// TestTemplScriptInGoCommentIsNotATag pins the phantom-region defect:
+// `<script` mentioned in a Go `//` comment opened a script region that
+// swallowed the real markup up to the next `</script>`, misattributing
+// `{ buttonID }` findings to lines inside the swallowed range (gogogo
+// internal/components/realtime_resync.templ). A comment is not a tag.
+func TestTemplScriptInGoCommentIsNotATag(t *testing.T) {
+	src := `package components
+
+// Templ never interpolates Go values inside <script> bodies.
+templ C(buttonID string) {
+	<button id={ buttonID }></button>
+	<script type="module">
+		var x = 1;
+	</script>
+}
+`
+	results := lintString(t, config{}, src, "templ", "templ")
+	assertNoCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
+}
+
+// TestTemplRealScriptAfterCommentStillFound pins the other half: skipping
+// comment lines must not swallow a genuine script tag later in the file.
+func TestTemplRealScriptAfterCommentStillFound(t *testing.T) {
+	src := `package components
+
+// <script> bodies are opaque to templ.
+templ C(roomID string) {
+	<script>
+		var room = "{ roomID }";
+	</script>
+}
+`
+	results := lintString(t, config{}, src, "templ", "templ")
+	assertHasCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
+}

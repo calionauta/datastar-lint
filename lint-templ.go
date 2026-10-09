@@ -191,6 +191,39 @@ func skipScriptDecl(s string, i int) int {
 	return len(s)
 }
 
+// scriptTagOpen finds the next markup <script tag at or after from,
+// returning the tag bounds. A candidate inside a `//` comment (Go or
+// JavaScript — either runs to end of line) is not a tag: without this,
+// `<script` mentioned in a comment opens a phantom region that swallows
+// the real markup up to the next `</script>`, misattributing findings
+// (or hiding them). Documented limit: `//` inside a quoted string on
+// the same line (e.g. "https://…") reads as a comment start too —
+// acceptable, a tag genuinely following a URL on one line is pathological.
+func scriptTagOpen(src, lower string, from int) (open, end int, ok bool) {
+	for {
+		rel := strings.Index(lower[from:], "<script")
+		if rel < 0 {
+			return 0, 0, false
+		}
+		open = from + rel
+		if lineHasComment(src, open) {
+			from = open + len("<script")
+			continue
+		}
+		e := strings.Index(src[open:], ">")
+		if e < 0 {
+			return 0, 0, false
+		}
+		return open, open + e, true
+	}
+}
+
+// lineHasComment reports whether pos sits after a `//` on its own line.
+func lineHasComment(src string, pos int) bool {
+	lineStart := strings.LastIndex(src[:pos], "\n") + 1
+	return strings.Contains(src[lineStart:pos], "//")
+}
+
 // scriptBodies returns the contents of markup-embedded <script> elements
 // without a src attribute (external files are not our text to lint).
 func scriptBodies(src string) []textRegion {
@@ -198,17 +231,12 @@ func scriptBodies(src string) []textRegion {
 	lower := strings.ToLower(src)
 	i := 0
 	for {
-		open := strings.Index(lower[i:], "<script")
-		if open < 0 {
+		open, end, ok := scriptTagOpen(src, lower, i)
+		if !ok {
 			return out
 		}
-		open += i
-		end := strings.Index(src[open:], ">")
-		if end < 0 {
-			return out
-		}
-		tag := src[open : open+end+1]
-		body := open + end + 1
+		tag := src[open : end+1]
+		body := end + 1
 		close := strings.Index(lower[body:], "</script>")
 		if close < 0 {
 			return out
@@ -243,18 +271,12 @@ func stripScriptBodies(src string) string {
 	lower := strings.ToLower(src)
 	i := 0
 	for {
-		open := strings.Index(lower[i:], "<script")
-		if open < 0 {
+		_, end, ok := scriptTagOpen(src, lower, i)
+		if !ok {
 			b.WriteString(src[i:])
 			return b.String()
 		}
-		open += i
-		end := strings.Index(src[open:], ">")
-		if end < 0 {
-			b.WriteString(src[i:])
-			return b.String()
-		}
-		body := open + end + 1
+		body := end + 1
 		close := strings.Index(lower[body:], "</script>")
 		if close < 0 {
 			b.WriteString(src[i:])

@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-10-09
+
+### Fixed
+
+- **`<script` inside a `//` comment opened a phantom script region.**
+  The `templ` analyzer treated the comment text as a tag, swallowing the
+  real markup up to the next `</script>` — findings were misattributed to
+  the swallowed lines (or hidden entirely). Tag scanning now skips
+  candidates inside line comments, shared by both region loops. Found via
+  a shared realtime component whose doc comment mentions script bodies.
+
 ## [0.13.1] - 2026-10-08
 
 ### Fixed
