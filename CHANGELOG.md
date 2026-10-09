@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-10-09
+
+### Fixed
+
+- **Fallback version lagged the release again.** v0.13.2 shipped the tag
+  without bumping the `version` constant, so the installed binary kept
+  reporting v0.13.1. Bumped, and added
+  `TestFallbackVersionTracksChangelog` so the suite — not a human
+  comparing strings — catches the next miss.
+
 ## [0.13.2] - 2026-10-09
 
 ### Fixed
