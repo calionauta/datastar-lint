@@ -158,6 +158,30 @@ The linter auto-discovers the file by walking up from the target directory. Pass
 ### Cross-reference checks (when both `go` and `html` analyzers are active)
 
 - **`CROSSREF_ORPHAN_SELECTOR`** — A Go `WithSelector("#id")` references an element id that doesn't exist in any scanned `.templ`/`.html`/`.tsx`/`.jsx`/`.ts`/`.js` file. Severity: warning.
+- **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY`** — A struct field whose JSON name matches a `data-bind` signal has a `json:"x"` tag **without** `omitempty`. The zero value still marshals (`"x":""`), so **every** merge that carries the struct overwrites the bound input — even after someone removes the field from the merge call, which is why this one is an error. Severity: error.
+- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. The input owns that value and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. An explicit write is visible at the call site, so this is a warning. Severity: warning.
+
+```go
+// .templ:  <input data-bind="searchQuery" />   <- the input owns this
+
+// flagged (error): the tag always marshals, so removing the field from the
+// merge call below would NOT fix the bug
+type Signals struct {
+	SearchQuery string `json:"searchQuery"`
+}
+
+// flagged (warning): the server writes a signal the input owns
+merge(map[string]any{"searchQuery": query})
+
+// clean: absent now means "leave the client's value alone"
+type Signals struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+}
+```
+
+A write that is genuinely intended (clearing an input once its submit has
+succeeded) is a warning, so it informs review without failing the build —
+which is the right trade where the tool runs with `-only-errors`.
 
 ### Templ-expression leakage (opt-in `templ` analyzer)
 

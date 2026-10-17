@@ -37,7 +37,7 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.13.3"
+var version = "0.14.0"
 
 // datastarTested is the latest Datastar release the rule set was verified
 // against. Bump it when rules are reviewed after a Datastar release.
@@ -341,6 +341,11 @@ func run(cfg config, active map[string]bool) []lintResult {
 		goFiles, htmlFiles := computeCrossRefFiles(allFiles)
 		crossResults := CrossReference(goFiles, htmlFiles)
 		all = append(all, crossResults...)
+		// Bound signals: a data-bind input owns its signal, so a server merge
+		// that writes it (or a struct field without omitempty that always
+		// marshals it) can overwrite live user input. Needs both halves: the
+		// template knows the binding, the Go file knows the write.
+		all = append(all, CrossReferenceBoundSignals(goFiles, htmlFiles)...)
 	}
 
 	return all

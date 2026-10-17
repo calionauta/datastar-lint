@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-17
+
+### Added
+
+- **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY` (error) and
+  `CLIENT_BOUND_SIGNAL_WRITTEN` (warning)** — a new cross-reference check for
+  the bound-signal class: a `data-bind="x"` input owns its signal, so a server
+  merge that writes `x` can overwrite what the user is typing, and the value
+  the server holds always lags (it only advances after a debounced
+  round-trip). The debounced request then reads the clobbered value and the
+  feature silently does nothing.
+
+  Two halves, because the bug has two:
+
+  - `..._NO_OMITEMPTY` (error) catches the invisible half: a struct field whose
+    JSON name is a bound signal, with a tag that lacks `omitempty`. The zero
+    value still marshals (`"x":""`), so **removing the field from the merge
+    call does not stop the write** — which is exactly how this survived a first,
+    wrong fix in the project that surfaced it (its browser smoke went from 3/3
+    passing to 0/3).
+  - `..._WRITTEN` (warning) catches the visible half: an explicit write of a
+    bound signal at the merge site. Sometimes intentional (clearing an input
+    after a successful submit), so it informs rather than blocks.
+
+  Runs when both `go` and `html` analyzers are active — the template knows the
+  binding, the Go file knows the write. Against the pre-fix sources of the
+  project that surfaced it, the check reports 4 findings; after the fix, only
+  the one intentional clear remains, as a warning.
+
 ## [0.13.3] - 2026-10-09
 
 ### Fixed
