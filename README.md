@@ -13,6 +13,7 @@ Datastar's contract lives in `data-*` attributes on HTML and `PatchElements`/`Pa
 - [Usage](#usage)
 - [Available analyzers](#available-analyzers)
 - [Update flags](#update-flags)
+- [Suppressing a finding](#suppressing-a-finding)
 - [What it catches](#what-it-catches)
 - [Enabling analyzers](#enabling-analyzers)
 - [Architecture](#architecture)
@@ -113,11 +114,63 @@ attributes:
     - data-tool
     - data-doc-id
     - data-app-state
+
+# Optional: codes this project never allows to be silenced.
+# The decision lives in this reviewed file, not in a comment next to the code.
+suppressions:
+  forbidden:
+    - CLIENT_BOUND_SIGNAL_WRITTEN
 ```
 
 The linter auto-discovers the file by walking up from the target directory. Pass `--config <path>` to use an explicit path. The built-in `knownAttrs` remain the default — the config only *adds* to them.
 
-> The UNKNOWN_ATTR warning says "If this is an intentional custom attribute (not Datastar), add it to .datastar-lint.yaml". This gives LLMs and humans a clear action, but the conditional ("if intentional") makes it explicit that typos and mistakes should be corrected, not silenced. UNKNOWN_ATTR_TYPO (detected misspelling) never mentions the config file — it only suggests the correction.
+> The UNKNOWN_ATTR warning says "If this is an intentional custom attribute (not Datastar), add it to .datastar-lint.yaml". This gives LLMs and humans a clear action, but the conditional ("if intentional") makes it explicit that typos and mistakes should be corrected, not silenced. UNKNOWN_ATTR_TYPO (detected misspelling) never mentions the config file — it only suggests the correction, and it cannot be suppressed at all.
+
+## Suppressing a finding
+
+One line, one code, one reason:
+
+```go
+// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — page-render seed: ?q= initialises the box once
+SearchQuery: query,
+```
+
+The directive silences at most the finding on its own line, the line it annotates,
+and the line directly above. No ranges, no globs, no file-wide form. Every applied
+suppression is printed in the run summary with its reason.
+
+It is deliberately harder to write than the check it silences, because the
+dangerous failure is not that suppression fails to work — it is that it works too
+easily, and the next agent silences the check instead of fixing the write. Six
+rules, each reported as its own finding:
+
+| What you wrote | What you get |
+|---|---|
+| `// datastar-lint:ignore` | `SUPPRESS_UNSPECIFIED` — a code is required |
+| `... CLIENT_BOUND_SIGNAL_WRITTEN` (no reason) | `SUPPRESS_NO_REASON` |
+| `... CLIENT_BOUND_SIGNAL_WRITEN` (typo) | `SUPPRESS_UNKNOWN_CODE` |
+| a code in the blocklist (below) | `SUPPRESS_BLOCKED` |
+| a directive that matched no finding | `SUPPRESS_UNUSED` — a stale suppression is a lie about the tree |
+| a finding 2+ lines below the directive | not silenced, and reported `SUPPRESS_UNUSED` |
+
+A directive inside a Go string literal is text, not a directive.
+
+### What cannot be suppressed
+
+Parse failures and unreadable files (`PARSE_ERROR`, `GO_PARSE_ERROR`, `FILE_OPEN` — the lint did not actually run on that file), and the checks whose false-negative is silent: `UNKNOWN_ATTR_TYPO`, `INVALID_MODIFIER`, `PATCH_ELEMENTS_NO_SELECTOR`, `PATCH_ELEMENTS_NO_ID`, `PATCH_SELECTOR_EMPTY`, `SDK_FUNC_IN_JS`. Add your own with `suppressions.forbidden` in the config.
+
+Note what is *not* on that list: `CLIENT_BOUND_SIGNAL_WRITTEN`. It has a real,
+correct exception (the page-render seed), and a check with no escape hatch gets
+disabled wholesale the first time it is right and inconvenient — the worst
+outcome. It is ERROR-severity with a required, reported reason instead.
+
+### Configuration for the project, not the agent
+
+`suppressions.forbidden` exists because a source comment and a config file are not
+the same act. An agent editing a file it was already asked to change can slip a
+suppression into that diff; editing `.datastar-lint.yaml` is a separate, visible
+change that a reviewer sees on its own. When a code may never be silenced at your
+project, say so once in the config rather than trusting every future edit.
 
 ## What it catches
 
@@ -166,7 +219,7 @@ The linter auto-discovers the file by walking up from the target directory. Pass
   line. A constant whose value is computed rather than literal is out of
   scope and stays unreported.
 - **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY`** — A struct field whose JSON name matches a `data-bind` signal has a `json:"x"` tag **without** `omitempty`. The zero value still marshals (`"x":""`), so **every** merge that carries the struct overwrites the bound input — even after someone removes the field from the merge call, which is why this one is an error. Severity: error.
-- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. An explicit write is visible at the call site, so this is a warning. Severity: warning.
+- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. Severity: error. Suppressible with a reason (`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <why>`), because the page-render seed is a real, correct write.
 
 ```go
 // .templ:  <input data-bind="searchQuery" />   <- the input owns this

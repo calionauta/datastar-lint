@@ -37,7 +37,7 @@ import (
 )
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
-var version = "0.14.2"
+var version = "0.15.0"
 
 // datastarTested is the latest Datastar release the rule set was verified
 // against. Bump it when rules are reviewed after a Datastar release.
@@ -160,8 +160,13 @@ func main() {
 
 	// Load project config: an allowed attributes list of intentional
 	// custom data-* attributes (e.g. data-tool, data-doc-id) so they are not
-	// flagged as UNKNOWN_ATTR.
+	// flagged as UNKNOWN_ATTR, and the project's own list of codes that may not
+	// be suppressed here (suppressions.forbidden).
 	cfg.allowedAttrs = loadAllowedAttrs(cfg.root, cfg.configPath)
+	var cfgSuppressions []string
+	if pc, _ := loadConfig(cfg.root, cfg.configPath); pc != nil {
+		cfgSuppressions = pc.Suppressions.Forbidden
+	}
 
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "debug: active analyzers: %s\n", analyzerList)
@@ -192,6 +197,17 @@ func main() {
 	start := time.Now()
 	results := run(cfg, activeAnalyzers)
 	elapsed := time.Since(start)
+
+	// Suppressions are applied AFTER the analyzers run and BEFORE anything else
+	// looks at the results: a suppressed finding must not count toward the exit
+	// code, and a directive that silenced nothing must be reported as an error
+	// (see suppress.go — an unused suppression is a stale lie about the tree).
+	// Collected from the same file set the analyzers saw, so a directive in an
+	// unlinted file cannot suppress anything.
+	supp := buildSuppressions(resultsFiles(results, cfg), cfgSuppressions)
+	results = supp.filter(results)
+	results = append(results, supp.findings...)
+	results = append(results, supp.unusedFindings()...)
 
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "debug: %d result(s) in %v\n", len(results), elapsed.Round(time.Millisecond))
@@ -247,6 +263,7 @@ func main() {
 	if len(results) == 0 {
 		drainUpdate()
 		fmt.Println("✓ No Datastar issues found.")
+		printSuppressionSummary(supp, false)
 		return
 	}
 
@@ -270,10 +287,74 @@ func main() {
 	errCount := countErrors(results)
 	if errCount > 0 {
 		fmt.Printf("❌ %d error(s) found.\n", errCount)
+	}
+	printSuppressionSummary(supp, true)
+	if errCount > 0 {
 		drainUpdate()
 		os.Exit(1)
 	}
 	drainUpdate()
+}
+
+// printSuppressionSummary lists every suppression that actually silenced a
+// finding, with its reason. A suppression that is not reported is
+// indistinguishable from a check that passed, which is the whole failure mode
+// the directive's design guards against.
+func printSuppressionSummary(supp *suppressionIndex, afterFindings bool) {
+	applied := supp.appliedSummary()
+	if len(applied) == 0 {
+		return
+	}
+	if afterFindings {
+		fmt.Println()
+	}
+	fmt.Printf("%d suppression(s) applied (each silences one line):\n", len(applied))
+	for _, a := range applied {
+		fmt.Printf("  • %s\n", a)
+	}
+}
+
+// resultsFiles returns every file the analyzers read, so the suppression scan
+// sees exactly the same set. Collecting it here (rather than re-walking) keeps
+// the two passes from disagreeing about which files exist.
+func resultsFiles(results []lintResult, cfg config) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(f string) {
+		if f == "" || seen[f] {
+			return
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	for _, r := range results {
+		add(r.File)
+	}
+	// Findings only cover files that produced one; a directive in a clean file
+	// must still be validated (it would be SUPPRESS_UNUSED otherwise). Walk the
+	// same trees the analyzers walked.
+	for _, root := range cfg.paths() {
+		info, err := os.Stat(root)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			add(root)
+			continue
+		}
+		_ = filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
+			if err != nil || fi.IsDir() {
+				return nil
+			}
+			ext := strings.TrimPrefix(filepath.Ext(path), ".")
+			switch ext {
+			case "go", "templ", "html", "htm", "tsx", "jsx", "ts", "js", "py":
+				add(path)
+			}
+			return nil
+		})
+	}
+	return out
 }
 
 // run collects files for each active analyzer and dispatches linting.

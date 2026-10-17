@@ -93,7 +93,7 @@ func CrossReferenceBoundSignals(goFiles, htmlFiles []string) []lintResult {
 			continue
 		}
 		results = append(results, lintResult{
-			Severity:  sevWarning,
+			Severity:  sevError,
 			File:      w.file,
 			Line:      w.line,
 			Attribute: name,
@@ -106,7 +106,10 @@ func CrossReferenceBoundSignals(goFiles, htmlFiles []string) []lintResult {
 			Suggestion: "Drop the field from the merge (the element already owns " +
 				"it), route the write through MarshalAndPatchSignalsIfMissing / " +
 				"WithOnlyIfMissing(true) so it cannot overwrite an existing signal, " +
-				"or write a different signal than the one bound to the input.",
+				"or write a different signal than the one bound to the input. If this " +
+				"write is genuinely correct in isolation — a page-render seed, the one " +
+				"legitimate case — silence THIS line: `// datastar-lint:ignore " +
+				"CLIENT_BOUND_SIGNAL_WRITTEN — <reason>`.",
 		})
 	}
 

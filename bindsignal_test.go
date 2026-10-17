@@ -55,10 +55,21 @@ func handler() {
 	if r == nil {
 		t.Fatalf("expected CLIENT_BOUND_SIGNAL_WRITTEN; got %v", codes(boundResults(t, dir)))
 	}
-	if r.Severity != sevWarning {
-		t.Errorf("WRITTEN severity = %q, want warning — an explicit write is "+
-			"visible at the call site and may be intentional, so it informs "+
-			"rather than blocks", r.Severity)
+	// Was sevWarning. The severity moved to ERROR once it was measured end to
+	// end: the guard only ever ran with `-only-errors`, so a warning was never
+	// printed by the gate and never blocked anything — the bug this check exists
+	// for was reproduced in gogogo-template with the check already present and
+	// the gate GREEN. A warning that no gate prints is not a softer check, it is
+	// no check. Escalating to ERROR is only viable together with suppress.go: the
+	// page-render seed is a real, correct write, and a blocking check with no
+	// escape hatch gets disabled wholesale.
+	if r.Severity != sevError {
+		t.Errorf("WRITTEN severity = %q, want error — the write is the bug; "+
+			"severity is what makes a gate print it at all", r.Severity)
+	}
+	if countErrors(boundResults(t, dir)) == 0 {
+		t.Error("countErrors = 0 — a warning-severity finding would make this " +
+			"gate decorative again")
 	}
 	if r.Attribute != "searchQuery" {
 		t.Errorf("attribute = %q, want the bound signal name", r.Attribute)
@@ -203,8 +214,13 @@ func TestBoundSignalsNeedsBothAnalyzers(t *testing.T) {
 //
 // red: run against the pre-fix gogogo-template sources, this produced 4
 // findings — 2 CLIENT_BOUND_SIGNAL_NO_OMITEMPTY (searchQuery, newTitle) and 2
-// CLIENT_BOUND_SIGNAL_WRITTEN (the merge sites). After the fix, only the
-// intentional `newTitle = ""` clear remained, as a warning.
+// CLIENT_BOUND_SIGNAL_WRITTEN (the merge sites).
+//
+// Both halves are ERRORs now. The explicit write was a warning when this test
+// was written, and that warning is precisely why the bug shipped twice: both
+// gates run with `-only-errors`, so a warning was never printed and never
+// blocked. The counts below pin the property that matters — every finding in
+// this shape is blocking — rather than the old error/warning split.
 func TestBoundSignalDetectsRealProjectShape(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "todo_list.templ"), `<div>
@@ -222,22 +238,21 @@ func patch(sse any, todos []any) {
 }
 `)
 	got := boundResults(t, dir)
-	var errs, warns int
+	var errs int
 	for _, r := range got {
-		switch r.Severity {
-		case sevError:
+		if r.Severity == sevError {
 			errs++
-		case sevWarning:
-			warns++
 		}
 	}
-	if errs != 1 {
-		t.Errorf("errors = %d, want 1 (the searchQuery tag without omitempty); findings: %s",
-			errs, dumpFindings(got))
+	want := 2
+	if len(got) != want {
+		t.Errorf("findings = %d, want %d; findings: %s",
+			len(got), want, dumpFindings(got))
 	}
-	if warns == 0 {
-		t.Errorf("warnings = 0, want at least 1 (the explicit write); findings: %s",
-			dumpFindings(got))
+	if errs != len(got) {
+		t.Errorf("errors = %d of %d findings, want all — a non-error finding is "+
+			"invisible to `-only-errors`, which is the gate that runs; findings: %s",
+			errs, len(got), dumpFindings(got))
 	}
 }
 

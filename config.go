@@ -14,6 +14,16 @@ type lintConfigFile struct {
 	Attributes struct {
 		Allowed []string `yaml:"allowed"`
 	} `yaml:"attributes"`
+	// Suppressions lets the PROJECT — not the agent editing a source file —
+	// decide which codes may not be silenced here. An entry lands in the same
+	// never-suppressible set as the built-in blocklist, so the decision lives in
+	// a reviewed, version-controlled file instead of in a comment next to the
+	// code it excuses. Typical use: forbid the one code the team has decided is
+	// always a bug at this project (e.g. CLIENT_BOUND_SIGNAL_WRITTEN), while a
+	// neighbouring project with a different UI contract allows it.
+	Suppressions struct {
+		Forbidden []string `yaml:"forbidden"`
+	} `yaml:"suppressions"`
 }
 
 // configFileNames lists the recognised config file names in order of preference.
@@ -79,6 +89,21 @@ func isAllowedCustomAttr(allowed map[string]bool, baseAttr string) bool {
 // Returns nil when no config file is found or usable (caller treats nil as
 // empty set).
 func loadAllowedAttrs(root, configPath string) map[string]bool {
+	cfg, _ := loadConfig(root, configPath)
+	if cfg == nil {
+		return nil
+	}
+	allowed := make(map[string]bool, len(cfg.Attributes.Allowed))
+	for _, a := range cfg.Attributes.Allowed {
+		allowed[strings.ToLower(a)] = true
+	}
+	return allowed
+}
+
+// loadConfig resolves and parses the project config once, returning nil when
+// there is none or it is unreadable (a warning is printed, matching the
+// attribute-list behaviour: a broken config must not stop a lint run).
+func loadConfig(root, configPath string) (*lintConfigFile, error) {
 	path := configPath
 	if path == "" {
 		if stat, err := os.Stat(root); err == nil && !stat.IsDir() {
@@ -87,16 +112,12 @@ func loadAllowedAttrs(root, configPath string) map[string]bool {
 		path = findConfig(root)
 	}
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	cfg, err := loadConfigFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not load config %s: %v\n", path, err)
-		return nil
+		return nil, err
 	}
-	allowed := make(map[string]bool, len(cfg.Attributes.Allowed))
-	for _, a := range cfg.Attributes.Allowed {
-		allowed[strings.ToLower(a)] = true
-	}
-	return allowed
+	return cfg, nil
 }

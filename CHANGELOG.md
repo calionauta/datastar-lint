@@ -5,6 +5,59 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-17
+
+### Added
+
+- **Suppression: `// datastar-lint:ignore <CODE> — <reason>`.** A finding can now
+  be silenced per line, and the directive is deliberately harder to write than
+  the check it silences. This closes a real hole rather than adding a
+  convenience: `CLIENT_BOUND_SIGNAL_WRITTEN` is ERROR-severity now, so the
+  legitimate page-render seed needs a way out that is not "disable the rule".
+
+  Six rules, each with its own finding, each mutation-tested:
+
+  | Attempt | Result |
+  |---|---|
+  | `// datastar-lint:ignore` (no code) | `SUPPRESS_UNSPECIFIED` |
+  | `... CLIENT_BOUND_SIGNAL_WRITTEN` (no reason) | `SUPPRESS_NO_REASON` |
+  | `... CLIENT_BOUND_SIGNAL_WRITEN` (typo) | `SUPPRESS_UNKNOWN_CODE` |
+  | a code in the blocklist | `SUPPRESS_BLOCKED` |
+  | a directive that matches nothing | `SUPPRESS_UNUSED` |
+  | a finding 2+ lines away | not silenced; directive reported unused |
+
+  Line-anchored (the directive's line, the line it annotates, or the one above),
+  never a range, glob or file-wide form. Every applied suppression is printed in
+  the run summary with its reason — a suppression that is not reported is
+  indistinguishable from a passing check, which is the failure mode this whole
+  design exists to avoid. Modelled on `nolintlint`'s `require-specific` /
+  `require-explanation` / `allow-unused: false`.
+
+- **`suppressions.forbidden` in `.datastar-lint.yaml`.** The PROJECT decides
+  which codes may not be silenced here, in a reviewed, version-controlled file.
+  An agent can edit a source comment as part of its change; editing the config
+  is a visible act. Merged into the built-in blocklist, so it needs no new code
+  path to trust.
+
+### Changed
+
+- **`CLIENT_BOUND_SIGNAL_WRITTEN` is now ERROR, not WARNING.** It was measured
+  end to end and the warning severity made the check decorative: both gates
+  (`bin/check-datastar.sh` in pre-commit, `make datastar-lint` in CI) run with
+  `-only-errors`, so a warning was never printed and never blocked. The class of
+  bug this rule exists for was reproduced in a real project with the rule
+  present and the gate green — a warning that no gate prints is not a softer
+  check, it is no check. The escalation is only viable together with
+  suppression: the page-render seed is a real, correct write, and a blocking
+  check with no escape hatch gets disabled wholesale instead of satisfied.
+
+  The rule is NOT in the never-suppressible blocklist, deliberately. A rule with
+  no escape hatch is a rule that gets switched off the first time it is right
+  and inconvenient.
+
+- The `CLIENT_BOUND_SIGNAL_WRITTEN` suggestion now names the suppression form,
+  so the legitimate exception has a documented way out at the point of decision.
+
 ## [0.14.2] - 2026-10-17
 
 ### Fixed
