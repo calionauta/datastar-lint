@@ -252,3 +252,159 @@ func dumpFindings(rs []lintResult) string {
 // keep os imported for writeFile's siblings in other test files (this file
 // reads nothing itself, but the package-level helper does).
 var _ = os.ReadFile
+
+// ---------------------------------------------------------------------------
+// The gaps a first version shipped with — each one here was a real miss.
+// ---------------------------------------------------------------------------
+
+// TestBoundSignalStructLiteralFieldIsReported pins the form that a regex-based
+// first version could not resolve: the Go field is SearchQuery and the wire
+// name is searchQuery, so comparing the field name to the binding directly
+// never matched and EVERY struct-literal write was silently missed. That is
+// the dominant form in the project that surfaced the bug (6 literals), so the
+// first version reported 1 of 3 boxes totalling 4 findings.
+//
+// red: before resolution through the field -> JSON index, this produced no
+// findings at all.
+func TestBoundSignalStructLiteralFieldIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"searchQuery,omitempty\"`\n}\n\n"+
+			"func f(v View) {\n\ts := Signals{SearchQuery: v.Q}\n\t_ = s\n}\n",
+	)
+	r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("a struct-literal field write was missed; got %v", codes(boundResults(t, dir)))
+	}
+	if r.Attribute != "searchQuery" {
+		t.Errorf("attribute = %q, want the WIRE name resolved from the Go field", r.Attribute)
+	}
+}
+
+// TestBoundSignalFieldAssignmentIsReported covers the third form: `s.X = v`.
+//
+// red: also missed before the AST rewrite.
+func TestBoundSignalFieldAssignmentIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"searchQuery,omitempty\"`\n}\n\n"+
+			"func f(s *Signals, v string) {\n\ts.SearchQuery = v\n}\n",
+	)
+	if hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN") == nil {
+		t.Errorf("a field-assignment write was missed; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestBoundSignalDottedPathRootIsReported pins path awareness: an input bound
+// to `user.name` is NOT safe from a server write of the whole `user` object,
+// which replaces the nested value the input reads.
+func TestBoundSignalDottedPathRootIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="user.name" />`,
+		`package p
+
+func f(u User) {
+	_ = map[string]any{"user": u}
+}
+`,
+	)
+	r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("a write to the root of a bound path was missed; got %v", codes(boundResults(t, dir)))
+	}
+	if r.Attribute != "user" {
+		t.Errorf("attribute = %q, want the path root the server actually replaces", r.Attribute)
+	}
+}
+
+// TestOnlyIfMissingSuppressesTheWrite pins the SDK's documented escape hatch:
+// `MarshalAndPatchSignalsIfMissing` and an explicit `WithOnlyIfMissing(true)`
+// make the client apply the signal only when it does not exist, so the write
+// cannot overwrite a bound input and must not be reported. Honouring this is
+// what keeps the check from demanding a change the framework already provides.
+func TestOnlyIfMissingSuppressesTheWrite(t *testing.T) {
+	templ := `<input data-bind="searchQuery" />`
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"IfMissing convenience method", `package p
+
+func f(sse *SSE, q string) {
+	sse.MarshalAndPatchSignalsIfMissing(map[string]any{"searchQuery": q})
+}
+`},
+		{"explicit WithOnlyIfMissing(true)", `package p
+
+func f(sse *SSE, q string) {
+	sse.MarshalAndPatchSignals(map[string]any{"searchQuery": q}, WithOnlyIfMissing(true))
+}
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeProject(t, templ, tc.src)
+			if got := boundResults(t, dir); len(got) != 0 {
+				t.Errorf("onlyIfMissing must suppress the write; got %v", codes(got))
+			}
+		})
+	}
+}
+
+// TestOnlyIfMissingFalseStillReports is the precision counterpart: passing
+// `false` is an explicit opt-OUT, so the write stays unsafe and must be
+// reported. A check that suppressed on the mere presence of the identifier
+// would let the real bug through.
+func TestOnlyIfMissingFalseStillReports(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		`package p
+
+func f(sse *SSE, q string) {
+	sse.MarshalAndPatchSignals(map[string]any{"searchQuery": q}, WithOnlyIfMissing(false))
+}
+`,
+	)
+	if hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN") == nil {
+		t.Errorf("WithOnlyIfMissing(false) is an opt-out and must still report; got %v",
+			codes(boundResults(t, dir)))
+	}
+}
+
+// TestOmitEmptyStillRequiredInsideOnlyIfMissing pins the interaction: the
+// escape hatch protects a WRITE (the client refuses to apply it), but a struct
+// field without omitempty remains dangerous because the same struct is merged
+// on other paths that are not onlyIfMissing. The tag is a property of the type,
+// not of one call site.
+func TestOmitEmptyStillRequiredInsideOnlyIfMissing(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"searchQuery\"`\n}\n\n"+
+			"func f(sse *SSE, s Signals) {\n\tsse.MarshalAndPatchSignalsIfMissing(s)\n}\n",
+	)
+	if hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_NO_OMITEMPTY") == nil {
+		t.Errorf("the tag error must survive the onlyIfMissing hatch; got %v",
+			codes(boundResults(t, dir)))
+	}
+}
+
+// TestCrossPackageFieldResolvesByJSONName covers a field whose struct is
+// declared in another package (not in the scanned files): the fallback matches
+// case-insensitively, so `todo.Signals{SearchQuery: q}` still resolves to
+// `searchQuery` without type information.
+func TestCrossPackageFieldResolvesByJSONName(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		`package p
+
+import "example.com/app/todo"
+
+func f(v string) {
+	s := todo.Signals{SearchQuery: v}
+	_ = s
+}
+`,
+	)
+	if hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN") == nil {
+		t.Errorf("a cross-package struct literal was missed; got %v", codes(boundResults(t, dir)))
+	}
+}

@@ -159,7 +159,7 @@ The linter auto-discovers the file by walking up from the target directory. Pass
 
 - **`CROSSREF_ORPHAN_SELECTOR`** — A Go `WithSelector("#id")` references an element id that doesn't exist in any scanned `.templ`/`.html`/`.tsx`/`.jsx`/`.ts`/`.js` file. Severity: warning.
 - **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY`** — A struct field whose JSON name matches a `data-bind` signal has a `json:"x"` tag **without** `omitempty`. The zero value still marshals (`"x":""`), so **every** merge that carries the struct overwrites the bound input — even after someone removes the field from the merge call, which is why this one is an error. Severity: error.
-- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. The input owns that value and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. An explicit write is visible at the call site, so this is a warning. Severity: warning.
+- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. An explicit write is visible at the call site, so this is a warning. Severity: warning.
 
 ```go
 // .templ:  <input data-bind="searchQuery" />   <- the input owns this
@@ -178,6 +178,41 @@ type Signals struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
 }
 ```
+
+Three write forms are recognized, because a project uses all three: a map key
+(`map[string]any{"x": v}`), a struct-literal field (`Signals{X: v}`, resolved
+through the field->JSON tag), and a field assignment (`s.X = v`). A dotted
+binding (`data-bind="user.name"`) also arms its root, since writing the whole
+`user` object replaces the value the input reads.
+
+**The documented escape hatch is honoured.** `onlyIfMissing` makes the client
+apply a signal only when one of that name does not already exist, so it cannot
+overwrite a bound input — that is what the SDK's
+`MarshalAndPatchSignalsIfMissing` and `WithOnlyIfMissing(true)` are for. A write
+routed through either is not reported:
+
+```go
+// clean: the client refuses to overwrite an existing signal
+sse.MarshalAndPatchSignalsIfMissing(map[string]any{"searchQuery": q})
+sse.MarshalAndPatchSignals(map[string]any{"searchQuery": q}, WithOnlyIfMissing(true))
+
+// still flagged: an explicit opt-out
+sse.MarshalAndPatchSignals(map[string]any{"searchQuery": q}, WithOnlyIfMissing(false))
+```
+
+The escape hatch covers a **write**, not the tag: a struct field without
+`omitempty` stays an error, because the same struct is merged on other paths
+that are not `onlyIfMissing`.
+
+Upstream context: Datastar documents the general model — *"the backend is the
+source of truth"* ([the tao of Datastar](https://data-star.dev/guide/the_tao_of_datastar)) —
+but not this collision. The behavior is upstream-recognized as a bug class:
+[#1228](https://github.com/starfederation/datastar/issues/1228) (*"corrupts the
+date when the user types over a date that is already in the box"*, fixed in
+v1.0.4) and [#783](https://github.com/starfederation/datastar/issues/783)
+(*"Input value gets lost"*) are the same write-back. A bound input is the
+exception to the source-of-truth rule, which is exactly why it is worth
+linting.
 
 A write that is genuinely intended (clearing an input once its submit has
 succeeded) is a warning, so it informs review without failing the build —

@@ -5,6 +5,48 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-10-17
+
+### Fixed
+
+- **The bound-signal check missed two of the three write forms.** v0.14.0
+  compared the Go field name (`SearchQuery`) against the wire name a template
+  binds (`searchQuery`), so a struct-literal field and a field assignment were
+  never reported — only map keys were. Against the project that surfaced the
+  class, that reported 4 findings where the corrected check reports 9.
+
+  The Go side now parses with `go/ast` and resolves every write through the
+  field → JSON tag index, so all three forms are covered:
+
+  - a map key: `map[string]any{"searchQuery": v}`
+  - a struct-literal field: `Signals{SearchQuery: v}`
+  - a field assignment: `s.SearchQuery = v`
+
+  A struct declared outside the scanned files (its tag therefore unknown) falls
+  back to a case-insensitive match against the bound signals themselves, and
+  only when that match is unique — a guess must never become a false positive.
+
+### Added
+
+- **Dotted bindings arm their root.** `data-bind="user.name"` now also marks
+  `user` as client-owned, because a server write of the whole `user` object
+  replaces the nested value the input reads.
+- **`onlyIfMissing` is honoured as the documented escape hatch.**
+  `MarshalAndPatchSignalsIfMissing` and an explicit `WithOnlyIfMissing(true)`
+  make the client apply a signal only when one does not already exist, so such
+  a write cannot overwrite a bound input and is not reported.
+  `WithOnlyIfMissing(false)` is an explicit opt-out and is still reported. The
+  hatch covers a write, not the tag: a struct field without `omitempty` remains
+  an error, because the same struct is merged on other paths.
+
+### Changed
+
+- The `CLIENT_BOUND_SIGNAL_WRITTEN` suggestion now names `onlyIfMissing` and
+  cites the upstream issues whose write-back this class matches
+  (starfederation/datastar#1228, #783) — the docs state the general model
+  ("the backend is the source of truth") but not this collision, so the rule
+  was arriving at the right answer without saying why.
+
 ## [0.14.0] - 2026-10-17
 
 ### Added
