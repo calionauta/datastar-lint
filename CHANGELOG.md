@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-10-17
+
+### Changed
+
+- **The finding now leads with the idiom, not the escape hatch.** Both sides of
+  `CLIENT_BOUND_SIGNAL_WRITTEN` used to open their suggestion with the shape
+  that needs a suppression ("drop it from the merge", "add ifmissing"), so a
+  reader following the tool learned to silence rather than to fix. They now name
+  the shape that needs no write at all first — keep the field off the wire
+  (`json:"-"`), render it into the input's `value=`, and let `data-bind` seed
+  the signal with `{ifMissing: true}` — with the suppression as the last resort.
+  A lint whose only remedy is "silence this line" trains the wrong reflex.
+
 ## [0.16.0] - 2026-10-17
 
 ### Fixed

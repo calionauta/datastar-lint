@@ -118,12 +118,13 @@ func CrossReferenceBoundSignals(goFiles, htmlFiles []string) []lintResult {
 				"incoming value straight back into the input, and the server's copy " +
 				"always lags the typing. Writing it from a server merge can overwrite " +
 				"live input (upstream #1228, #783 are this same write-back).",
-			Suggestion: "Drop the field from the merge (the element already owns " +
-				"it), route the write through MarshalAndPatchSignalsIfMissing / " +
-				"WithOnlyIfMissing(true) so it cannot overwrite an existing signal, " +
-				"or write a different signal than the one bound to the input. If this " +
-				"write is genuinely correct in isolation — a page-render seed, the one " +
-				"legitimate case — silence THIS line: `// datastar-lint:ignore " +
+			Suggestion: "Preferred: keep the field off the wire (`json:\"-\"`) and " +
+				"render it into the input's value= — data-bind seeds the signal from " +
+				"the element with {ifMissing: true}, so the server writes nothing and " +
+				"no suppression is needed. Otherwise drop it from the merge, route it " +
+				"through MarshalAndPatchSignalsIfMissing / WithOnlyIfMissing(true), or " +
+				"write a different signal. A deliberately correct single write (a " +
+				"page-render seed) can silence THIS line: `// datastar-lint:ignore " +
 				"CLIENT_BOUND_SIGNAL_WRITTEN — <reason>`.",
 		})
 	}
@@ -357,9 +358,11 @@ func htmlBoundWriteFinding(file string, line, col int, name, attr string) lintRe
 			"client-owned while the user types; " + attr + " patches it on every " +
 			"morph, and the server's copy always lags the typing. A re-render can " +
 			"overwrite live input (upstream #1228, #783 are this same write-back).",
-		Suggestion: "Add the ifmissing modifier (data-signals__ifmissing) so the " +
-			"patch applies only when the signal does not exist yet, seed the signal " +
-			"from the input instead (value= + data-bind), or silence THIS line: " +
+		Suggestion: "Preferred: seed the signal from the input (value= + data-bind) " +
+			"and drop this attribute — data-bind creates the signal with " +
+			"{ifMissing: true}. Otherwise add the ifmissing modifier " +
+			"(data-signals__ifmissing / data-signals:key__ifmissing) so the patch " +
+			"applies only when the signal does not exist yet, or silence THIS line: " +
 			"`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <reason>`.",
 	}
 }

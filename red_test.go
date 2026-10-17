@@ -883,3 +883,57 @@ func TestHTMLSignalDottedPathRootIsReported(t *testing.T) {
 		t.Errorf("a write to the path root clobbers the bound leaf; got %v", codes(boundResults(t, dir)))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 14. The finding teaches the idiom, not just the escape hatch
+// ---------------------------------------------------------------------------
+
+// TestSuggestionLeadsWithTheIdiom pins the guidance text. A lint whose only
+// remedy is "silence this line" trains the wrong reflex: the reader learns to
+// suppress rather than to use the shape that needs no write. The suggestion
+// must point at the idiom first — keep the field off the wire and let the
+// input seed itself — and the suppression only as the last resort.
+//
+// red: before this, the Go-side suggestion opened with "Drop the field from the
+// merge" and never mentioned `json:"-"`, so a reader following the tool would
+// never reach the shape the framework documents.
+func TestSuggestionLeadsWithTheIdiom(t *testing.T) {
+	dir := writeProject(t,
+		`<input name="q" data-bind="searchQuery" />`,
+		`package p
+func w() { _ = map[string]any{"searchQuery": ""} }`,
+	)
+	rs := boundResults(t, dir)
+	r := hasCode(t, rs, "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("expected a finding; got %v", codes(rs))
+	}
+	if !strings.Contains(r.Suggestion, `json:"-"`) {
+		t.Errorf("the suggestion must name the idiom (`json:\"-\"` + value=); got: %s", r.Suggestion)
+	}
+	if !strings.Contains(r.Suggestion, "{ifMissing: true}") {
+		t.Errorf("the suggestion must explain WHY value= is enough ({ifMissing: true}); got: %s", r.Suggestion)
+	}
+	// The idiom must come before the escape hatch, or a reader stops at the
+	// suppression.
+	if strings.Index(r.Suggestion, "Preferred:") > strings.Index(r.Suggestion, "ignore") {
+		t.Errorf("the idiom must precede the suppression; got: %s", r.Suggestion)
+	}
+}
+
+// TestHTMLSuggestionLeadsWithTheIdiom is the template-side twin.
+func TestHTMLSuggestionLeadsWithTheIdiom(t *testing.T) {
+	dir := writeProject(t,
+		`<input name="q" data-bind="searchQuery" />
+<span data-signals:searchQuery="x"></span>`,
+		"package p\n",
+	)
+	rs := boundResults(t, dir)
+	r := hasCode(t, rs, "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("expected a finding; got %v", codes(rs))
+	}
+	if !strings.Contains(r.Suggestion, "value= + data-bind") {
+		t.Errorf("the HTML suggestion must lead with seeding from the input; got: %s", r.Suggestion)
+	}
+}
