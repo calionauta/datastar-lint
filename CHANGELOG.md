@@ -75,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (starfederation/datastar#1228, #783) — the docs state the general model
   ("the backend is the source of truth") but not this collision, so the rule
   was arriving at the right answer without saying why.
+- The rule comment now also pinpoints the upstream MECHANISM rather than
+  asserting it: `library/src/plugins/attributes/bind.ts` in Datastar v1.0.4
+  (~line 302) does `cleanup = effect(syncElement)` with `syncElement =
+  () => adapter.set_(el, getPath(path))`. An `effect` is why every write to the
+  signal reaches the element — the claim is checkable in the upstream source,
+  not taken on the strength of the two issue reports.
 
 ## [0.14.0] - 2026-10-17
 

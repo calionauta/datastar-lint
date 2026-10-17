@@ -17,20 +17,24 @@ import (
 //
 // A signal bound two-way to an input with `data-bind="X"` is CLIENT-owned while
 // the user is typing: the element is the source of truth, and Datastar writes any
-// incoming signal value straight back into the DOM (`bind.ts` wraps its
-// `syncElement` in an effect). The server's copy is a mirror that is always
-// behind — a value reaches the server only after a debounced round-trip — so a
-// background merge (stream handshake, record-event re-list, any patch-signals
-// call) that carries X overwrites what the user is typing, and the element's
-// next read (often the debounced request itself) then sees an empty or stale
-// value. The symptom is a feature that silently does nothing.
+// incoming signal value straight back into the DOM. That is verifiable in the
+// upstream source, not an inference: in `library/src/plugins/attributes/bind.ts`
+// (Datastar v1.0.4, ~line 302) the binding does
+// `cleanup = effect(syncElement)` with
+// `syncElement = () => adapter.set_(el, getPath(path))` — an effect, so every
+// write to the signal reaches the element. The server's copy is a mirror that
+// is always behind — a value reaches the server only after a debounced
+// round-trip — so a background merge (stream handshake, record-event re-list,
+// any patch-signals call) that carries X overwrites what the user is typing,
+// and the element's next read (often the debounced request itself) then sees an
+// empty or stale value. The symptom is a feature that silently does nothing.
 //
-// This is not documented as a rule upstream, but it is upstream-recognized
-// behaviour: the same write-back is what garbled input in
-// starfederation/datastar #1228 ("corrupts the date when the user types over a
-// date that is already in the box", fixed in v1.0.4) and #783 ("Input value gets
-// lost"). The docs state the general model — "the backend is the source of
-// truth" (guide/the_tao_of_datastar) — which is exactly why a bound input is the
+// Upstream does not document this as a rule, but it does recognise the
+// behaviour: the same write-back garbled input in starfederation/datastar #1228
+// ("corrupts the date when the user types over a date that is already in the
+// box", fixed in v1.0.4) and lost it in #783 ("Input value gets lost"). The
+// docs state the general model — "the backend is the source of truth"
+// (guide/the_tao_of_datastar) — which is exactly why a bound input is the
 // exception worth linting: for a signal an input owns, the ELEMENT is the source
 // of truth until the round-trip settles.
 //
