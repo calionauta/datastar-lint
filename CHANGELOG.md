@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2] - 2026-10-17
+
+### Fixed
+
+- **The README described the wrong severity for
+  `CLIENT_BOUND_SIGNAL_WRITTEN`.** The rule list said "flagged (warning)" and
+  the prose claimed an intended write "is a warning, so it informs review
+  without failing the build — which is the right trade where the tool runs with
+  `-only-errors`". It has been an error since 0.15.0, and because every gate
+  runs `-only-errors`, a warning was never printed at all. A reader trusting the
+  README would expect a broken build NOT to fail. The example is now
+  "flagged (error)", and the prose says what actually happens: the run fails
+  until the write is gone, routed through `onlyIfMissing`, or named as an
+  exception.
+- The `CLIENT_BOUND_SIGNAL_WRITTEN` entry now points at the idiom that needs no
+  suppression (`json:"-"` + `value=`) before mentioning the escape hatch, and
+  notes that `suppressions.forbidden` lets a project reject even that.
+
 ## [0.16.1] - 2026-10-17
 
 ### Changed

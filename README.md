@@ -219,7 +219,7 @@ project, say so once in the config rather than trusting every future edit.
   line. A constant whose value is computed rather than literal is out of
   scope and stays unreported.
 - **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY`** — A struct field whose JSON name matches a `data-bind` signal has a `json:"x"` tag **without** `omitempty`. The zero value still marshals (`"x":""`), so **every** merge that carries the struct overwrites the bound input — even after someone removes the field from the merge call, which is why this one is an error. Severity: error.
-- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — the server writes a signal that some input binds two-way with `data-bind`, on **any** of three doors: a Go merge, a `data-signals:key` attribute, or a `data-signals={obj}` attribute. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background write (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. Severity: error. Suppressible with a reason (`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <why>`), because the page-render seed is a real, correct write.
+- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — the server writes a signal that some input binds two-way with `data-bind`, on **any** of three doors: a Go merge, a `data-signals:key` attribute, or a `data-signals={obj}` attribute. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background write (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. Severity: error. The fix is usually to stop writing the field at all — see the `json:"-"` + `value=` shape below, which needs no suppression. A single deliberately correct write (a page-render seed) can be silenced with a reason (`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <why>`), though `suppressions.forbidden` lets a project reject even that.
 
 ```go
 // .templ:  <input data-bind="searchQuery" />   <- the input owns this
@@ -230,7 +230,7 @@ type Signals struct {
 	SearchQuery string `json:"searchQuery"`
 }
 
-// flagged (warning): the server writes a signal the input owns
+// flagged (error): the server writes a signal the input owns
 merge(map[string]any{"searchQuery": query})
 
 // clean: absent now means "leave the client's value alone"
@@ -300,8 +300,10 @@ exception to the source-of-truth rule, which is exactly why it is worth
 linting.
 
 A write that is genuinely intended (clearing an input once its submit has
-succeeded) is a warning, so it informs review without failing the build —
-which is the right trade where the tool runs with `-only-errors`.
+succeeded) is the case for a line suppression with a reason, not for a lower
+severity: it is an error, so a run with `-only-errors` fails until the write is
+gone, routed through `onlyIfMissing`, or named as an exception. The idiom above
+(`json:"-"` + `value=`) removes the need for all three.
 
 ### Templ-expression leakage (opt-in `templ` analyzer)
 
