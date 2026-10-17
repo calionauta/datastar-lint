@@ -43,6 +43,16 @@ import (
 // removing the field from the merge CALL does not stop the write. That is why
 // this check reports the struct-tag form too.
 //
+// The same write also reaches the client through the mark-up itself:
+// `data-signals:key` (mergePaths) and `data-signals={obj}` (mergePatch) patch a
+// signal at attribute-apply time, and a patch re-applies on every morph — the
+// re-list that clobbers live input can be a server-rendered signals attribute
+// just as easily as a Go merge call. Both HTML forms are therefore checked here
+// against the same bound set, and both honour the one safe form: a modifier
+// containing `ifmissing` (upstream `mergePaths(..., {ifMissing})` /
+// `mergePatch(patch, {ifMissing})`) applies the signal only when it does not
+// exist yet, so it cannot overwrite what the browser already holds.
+//
 // The official escape hatch is `onlyIfMissing` — `MarshalAndPatchSignalsIfMissing`
 // or `WithOnlyIfMissing(true)` in the Go SDK — which the client applies only to
 // signals that do not exist yet, so it cannot overwrite a signal the browser
@@ -82,6 +92,11 @@ func CrossReferenceBoundSignals(goFiles, htmlFiles []string) []lintResult {
 	idx := parseGoIndex(goFiles, bound)
 
 	var results []lintResult
+
+	// Writes that arrive through the mark-up: data-signals:key and
+	// data-signals={obj}. A server-rendered signals attribute re-applies on every
+	// morph, so it overwrites live input exactly like a Go merge does.
+	results = append(results, collectHTMLSignalWrites(htmlFiles, bound)...)
 
 	// Writes, resolved through the struct field -> JSON name index so a Go
 	// field (SearchQuery) is matched against the name it serializes to
@@ -244,6 +259,111 @@ func collectBoundSignalsDOM(text string, add func(string)) {
 	walk(doc)
 }
 
+// --------------- HTML/Templ side: which signals are WRITTEN ---------------
+
+// signalKeyAttrRE matches `data-signals:<key><mods>=`. The key is the signal the
+// attribute patches; mods is the modifier suffix (`__ifmissing`), checked by the
+// caller for the safe form. The value is deliberately not captured: where the
+// value came from does not change whether the write can clobber a bound input.
+var signalKeyAttrRE = regexpMustCompile(`\bdata-signals:([A-Za-z_$][A-Za-z0-9_$.\-]*?)((?:__[A-Za-z0-9_.\-]+)*)\s*=`)
+
+// signalObjectAttrRE captures a quoted `data-signals[mods]="..."` value (double
+// or single quotes). Templ's `data-signals={ expr }` is unquoted and therefore
+// never matches: a dynamically-built object's keys are not statically knowable,
+// and guessing them would be the kind of false positive this check must avoid.
+var signalObjectAttrRE = regexpMustCompile(`\bdata-signals((?:__[A-Za-z0-9_.\-]+)*)\s*=\s*(["'])([^"']*)["']`)
+
+// signalObjectKeyRE pulls object-literal keys out of a data-signals value, in
+// JSON (`"k":`) and JS (`k:`) shape. Object-literal reach is what mergePatch
+// writes, key by key.
+var signalObjectKeyRE = regexpMustCompile(`(?:"([A-Za-z_$][A-Za-z0-9_$.\-]*)"|'([A-Za-z_$][A-Za-z0-9_$.\-]*)'|\b([A-Za-z_$][A-Za-z0-9_$.\-]*)\s*:)`)
+
+// collectHTMLSignalWrites finds signals a template patches and reports those
+// that are bound two-way to an input, unless the patch carries `ifmissing`.
+func collectHTMLSignalWrites(files []string, bound map[string]bool) []lintResult {
+	var results []lintResult
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		// Blank comments and script bodies before scanning. Both preserve byte
+		// offsets, so a finding still points at the real line — but example code
+		// in a comment (the house style documents attributes that way) and JS in
+		// a <script> that merely mentions the attribute no longer report.
+		text := stripScriptBodies(stripHTMLComments(string(src)))
+
+		// Form 1: data-signals:key (mergePaths).
+		for _, m := range signalKeyAttrRE.FindAllStringSubmatchIndex(text, -1) {
+			key := text[m[2]:m[3]]
+			mods := text[m[4]:m[5]]
+			if !bound[key] || hasIfMissingModifier(mods) {
+				continue
+			}
+			line, col := offsetLineCol(text, m[0])
+			results = append(results, htmlBoundWriteFinding(f, line, col, key, "data-signals:"+key))
+		}
+
+		// Form 2: data-signals={obj} (mergePatch).
+		for _, m := range signalObjectAttrRE.FindAllStringSubmatchIndex(text, -1) {
+			mods := text[m[2]:m[3]]
+			// Decode entities first: in real mark-up the object's quotes are
+			// written `&quot;` (templ escapes them), so the keys are invisible to
+			// the key regex until the value is unescaped.
+			val := html.UnescapeString(text[m[6]:m[7]])
+			if hasIfMissingModifier(mods) || isTemplGoExpr(val) {
+				continue
+			}
+			seen := make(map[string]bool)
+			for _, km := range signalObjectKeyRE.FindAllStringSubmatch(val, -1) {
+				key := km[1]
+				if key == "" {
+					key = km[2]
+				}
+				if key == "" {
+					key = km[3]
+				}
+				if key == "" || !bound[key] || seen[key] {
+					continue
+				}
+				seen[key] = true
+				line, col := offsetLineCol(text, m[0])
+				results = append(results, htmlBoundWriteFinding(f, line, col, key, "data-signals={...}"))
+			}
+		}
+	}
+	return results
+}
+
+// hasIfMissingModifier reports whether a modifier suffix contains `ifmissing`.
+// The upstream modifier is spelled `ifmissing`, so the test is a substring on
+// the lower-cased suffix rather than equality.
+func hasIfMissingModifier(mods string) bool {
+	return strings.Contains(strings.ToLower(mods), "ifmissing")
+}
+
+// htmlBoundWriteFinding is the template-side twin of the Go merge finding: same
+// code (one class of bug, one suppression vocabulary), a message that names the
+// attribute so the reader knows where the write comes from.
+func htmlBoundWriteFinding(file string, line, col int, name, attr string) lintResult {
+	return lintResult{
+		Severity:  sevError,
+		File:      file,
+		Line:      line,
+		Col:       col,
+		Attribute: name,
+		Code:      "CLIENT_BOUND_SIGNAL_WRITTEN",
+		Message: "$" + name + " is bound two-way to an input (data-bind), so it is " +
+			"client-owned while the user types; " + attr + " patches it on every " +
+			"morph, and the server's copy always lags the typing. A re-render can " +
+			"overwrite live input (upstream #1228, #783 are this same write-back).",
+		Suggestion: "Add the ifmissing modifier (data-signals__ifmissing) so the " +
+			"patch applies only when the signal does not exist yet, seed the signal " +
+			"from the input instead (value= + data-bind), or silence THIS line: " +
+			"`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <reason>`.",
+	}
+}
+
 // --------------- Go side (go/ast) ---------------
 
 type signalWrite struct {
@@ -278,6 +398,13 @@ type goIndex struct {
 	// Populated from every struct type declaration in the scanned files, so a
 	// literal or assignment can be resolved without type information.
 	fieldToJSON map[string]string
+	// excluded holds fields whose tag is exactly `json:"-"` — the author's
+	// explicit "never serialize this". Without this set, resolution fell through
+	// to the case-insensitive fallbacks below and re-found the bound signal by
+	// name, so an explicitly excluded field was reported as a write the author
+	// had already ruled out. Excluded must mean "no wire name", not "no tag":
+	// the difference is the whole point of `-`.
+	excluded map[string]bool
 	// fields are all tagged struct fields whose JSON name is not "-".
 	fields []signalField
 	// writes are the field or map-key writes found in the code.
@@ -297,6 +424,13 @@ func (i *goIndex) writeName(w signalWrite) string {
 // signalName resolves a Go field name to the JSON name it serializes to.
 func (i *goIndex) signalName(field string) string {
 	if field == "" {
+		return ""
+	}
+	// An explicit `json:"-"` is a decision, not a gap: the field never reaches
+	// the wire, so it cannot overwrite a bound signal no matter how its name
+	// resembles one. Stop before the fallbacks — they exist for UNKNOWN tags,
+	// and a known exclusion is not an unknown.
+	if i.excluded[field] {
 		return ""
 	}
 	if jsonName, ok := i.fieldToJSON[field]; ok {
@@ -339,6 +473,7 @@ func (i *goIndex) signalName(field string) string {
 func parseGoIndex(files []string, bound map[string]bool) *goIndex {
 	idx := &goIndex{
 		fieldToJSON: make(map[string]string),
+		excluded:    make(map[string]bool),
 		consts:      collectStringConsts(files),
 		bound:       bound,
 	}
@@ -375,13 +510,22 @@ func parseGoIndex(files []string, bound map[string]bool) *goIndex {
 					continue
 				}
 				tag := strings.Trim(field.Tag.Value, "`")
-				jsonName, omit, ok := parseJSONTag(tag)
+				jsonName, omit, excluded, ok := parseJSONTag(tag)
 				if !ok {
 					continue
 				}
 				for _, name := range field.Names {
 					if name.Name == "_" {
 						continue
+					}
+					if excluded {
+						idx.excluded[name.Name] = true
+						continue
+					}
+					// An empty tag name defers to the Go field name, exactly as
+					// encoding/json does.
+					if jsonName == "" {
+						jsonName = name.Name
 					}
 					idx.fieldToJSON[name.Name] = jsonName
 					idx.fields = append(idx.fields, signalField{
@@ -471,31 +615,43 @@ func parseGoIndex(files []string, bound map[string]bool) *goIndex {
 	return idx
 }
 
-// parseJSONTag extracts (jsonName, hasOmitEmpty, ok) from a struct tag body.
-func parseJSONTag(tag string) (string, bool, bool) {
+// parseJSONTag extracts (jsonName, hasOmitEmpty, excluded, ok) from a struct
+// tag body.
+//
+// The four-way result exists because `json:"-"` and "no json tag" must not be
+// conflated. Both used to return ok=false, so both were skipped — and a skipped
+// field fell through to the name-based fallbacks in signalName, which re-found
+// the bound signal. An explicit `-` therefore behaved exactly like its absence,
+// the opposite of what the author wrote. "No tag" stays ok=false (the field's
+// wire name is the Go name, which Tag==nil means we cannot see); `-` is
+// ok=true, excluded=true.
+func parseJSONTag(tag string) (name string, omitEmpty, excluded, ok bool) {
 	const key = `json:"`
 	i := strings.Index(tag, key)
 	if i < 0 {
-		return "", false, false
+		return "", false, false, false
 	}
 	rest := tag[i+len(key):]
 	end := strings.Index(rest, `"`)
 	if end < 0 {
-		return "", false, false
+		return "", false, false, false
 	}
 	parts := strings.Split(rest[:end], ",")
-	name := parts[0]
-	if name == "" || name == "-" {
-		return "", false, false
+	name = parts[0]
+	if name == "-" {
+		return "", false, true, true
 	}
-	omit := false
 	for _, opt := range parts[1:] {
 		if opt == "omitempty" {
-			omit = true
+			omitEmpty = true
 			break
 		}
 	}
-	return name, omit, true
+	// An empty name means "use the Go field name" (encoding/json: either `json:""`
+	// or `json:",omitempty"`), which is a real tag with a real wire name — the
+	// caller substitutes the field name. It used to return ok=false, so such a
+	// field was invisible to BOTH checks: no write and no missing-omitempty.
+	return name, omitEmpty, false, true
 }
 
 func unquote(s string) string {

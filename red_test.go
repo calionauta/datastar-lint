@@ -597,3 +597,289 @@ templ C(roomID string) {
 	results := lintString(t, config{}, src, "templ", "templ")
 	assertHasCode(t, results, "TEMPL_EXPR_IN_SCRIPT")
 }
+
+// ---------------------------------------------------------------------------
+// 12. json:"-" is an explicit exclusion, not a missing tag
+// ---------------------------------------------------------------------------
+
+// TestJSONDashIsNotAWrite pins the false positive that made the idiomatic fix
+// impossible: `json:"-"` means "never serialize this field", which is the
+// STRONGEST possible statement that the field cannot clobber a bound signal. The
+// parser returned ok=false for "-" exactly as for an absent tag, so the field
+// never entered fieldToJSON — and signalName then fell through to the
+// case-insensitive fallback against the bound set and re-found `searchQuery` by
+// name. The author's explicit "do not send this" was read as "send it under the
+// default name", and the gate blocked the correct code.
+//
+// red: with `json:"-"` and the struct-literal write below, the tool exited 1
+// with CLIENT_BOUND_SIGNAL_WRITTEN — a finding the author had already precluded
+// by the tag. Only the case-insensitive fallback produced it.
+func TestJSONDashIsNotAWrite(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"-\"`\n}\n\nfunc w() Signals {\n\treturn Signals{SearchQuery: \"seed\"}\n}\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r != nil {
+		t.Errorf("json:\"-\" was reported as a write at %s:%d — the tag says the "+
+			"field never reaches the wire, so it cannot overwrite the bound input; "+
+			"the case-insensitive fallback must not second-guess an explicit exclusion",
+			r.File, r.Line)
+	}
+	if countErrors(boundResults(t, dir)) != 0 {
+		t.Errorf("expected no errors; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestJSONDashIsNotAFieldWithoutOmitEmpty pins the other half: the exclusion
+// must also keep the field out of the always-marshals check. A `json:"-"`
+// field with no omitempty is not "a field that always marshals" — it never
+// marshals at all.
+//
+// red: the field was absent from idx.fields entirely (parseJSONTag rejected
+// it), so this half passed for the wrong reason. Now that the exclusion is
+// modelled explicitly, the test guards the property directly rather than by
+// accident.
+func TestJSONDashIsNotAFieldWithoutOmitEmpty(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"-\"`\n}\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_NO_OMITEMPTY"); r != nil {
+		t.Errorf("json:\"-\" reported as missing omitempty at %s:%d — an excluded "+
+			"field never marshals, omitempty is irrelevant", r.File, r.Line)
+	}
+}
+
+// TestJSONDashOnUnboundFieldStaysSilent is the control: the exclusion tracking
+// must not invent findings. A `json:"-"` field with no binding anywhere must be
+// entirely quiet.
+func TestJSONDashOnUnboundFieldStaysSilent(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tInternal string `json:\"-\"`\n}\n\nfunc w() Signals {\n\treturn Signals{Internal: \"x\"}\n}\n",
+	)
+	if rs := boundResults(t, dir); len(rs) != 0 {
+		t.Errorf("expected no findings, got %v", codes(rs))
+	}
+}
+
+// TestUnknownStructFieldStillFallsBackToBoundSet is the guard on the fix: the
+// case-insensitive fallback exists for a struct declared in another package
+// (its tag is not in the scanned files). Excluding `json:"-"` must not disable
+// that fallback for a field whose tag genuinely is unknown.
+//
+// red: n/a — this is the positive control for TestJSONDashIsNotAWrite. If the
+// fix had simply deleted the fallback, this would fail.
+func TestUnknownStructFieldStillFallsBackToBoundSet(t *testing.T) {
+	// The struct is NOT in the scanned file: only the write is.
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />`,
+		`package p
+
+func w() {
+	_ = map[string]any{"searchQuery": ""}
+}
+`)
+	// A map key is the wire name directly and must still be caught.
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r == nil {
+		t.Error("map-key write of a bound signal must still be reported")
+	}
+}
+
+// TestExplicitFieldNameTagResolves pins the sibling case in the same family:
+// an EMPTY tag name (`json:""`) means "use the Go field name" per
+// encoding/json. parseJSONTag returned ok=false for it, so the field was
+// invisible to BOTH halves of the check — a silent false NEGATIVE, not a false
+// positive. The discriminating half is NO_OMITEMPTY: the WRITTEN half is masked
+// by the bound-set fallback (which resolves the name too), so only the
+// always-marshals check reveals the gap.
+//
+// red: with `json:""` and no omitempty on a bound field, the tool reported
+// nothing — the field never entered idx.fields, so the always-marshals trap was
+// invisible.
+func TestExplicitFieldNameTagResolves(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="SearchQuery" />`,
+		"package p\n\ntype Signals struct {\n\tSearchQuery string `json:\"\"`\n}\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_NO_OMITEMPTY"); r == nil {
+		t.Errorf("json:\"\" uses the Go field name (SearchQuery) with no omitempty, "+
+			"so it always marshals and can clobber the bound input; the check must "+
+			"see it; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 13. Bound-signal writes that arrive through the mark-up
+// ---------------------------------------------------------------------------
+
+// The Go-side rule covers a merge CALL and a struct tag. Neither sees the write
+// that the template itself performs: `data-signals:key` is mergePaths and
+// `data-signals={obj}` is mergePatch in upstream
+// (library/src/plugins/attributes/signals.ts), and both re-apply on every morph.
+// A server-rendered signals attribute therefore clobbers live input exactly like
+// a Go merge — the same bug, a third door. These tests pin that door open, and
+// pin the one safe form (`ifmissing`) shut.
+
+// TestHTMLSignalKeyWriteOfBoundSignalIsReported pins the data-signals:key form.
+//
+// red: before the HTML collector, any of the three doors below exited 0 — the
+// tool's own gogogo test tree has no `data-signals:key`, so the gap was
+// invisible on the project that surfaced the class.
+func TestHTMLSignalKeyWriteOfBoundSignalIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<span data-signals:searchQuery="seed"></span>`,
+		"package p\n",
+	)
+	r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("expected the data-signals:key write to be reported; got %v", codes(boundResults(t, dir)))
+	}
+	if !strings.HasSuffix(r.File, ".templ") {
+		t.Errorf("finding should point at the template (the write is there), got %s", r.File)
+	}
+}
+
+// TestHTMLSignalKeyWithIfMissingIsClean pins the escape hatch on the HTML side.
+// `data-signals:key__ifmissing` becomes mergePaths(..., {ifMissing: true}),
+// which applies only when the signal does not exist — it cannot overwrite what
+// the browser holds, so it must stay silent.
+func TestHTMLSignalKeyWithIfMissingIsClean(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<span data-signals:searchQuery__ifmissing="seed"></span>`,
+		"package p\n",
+	)
+	if rs := boundResults(t, dir); len(rs) != 0 {
+		t.Errorf("ifmissing must be honoured on the HTML side too; got %v", codes(rs))
+	}
+}
+
+// TestHTMLSignalKeyWithOtherModifierStillReports is the guard against
+// over-broad suppression: only `ifmissing` is safe. A `__case` (or any other)
+// modifier still patches on every morph.
+//
+// red: the key regex captured the modifier into the KEY
+// (`searchQuery__case.camel`), which matched no bound signal and hid the write.
+func TestHTMLSignalKeyWithOtherModifierStillReports(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<span data-signals:searchQuery__case.camel="seed"></span>`,
+		"package p\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r == nil {
+		t.Errorf("a non-ifmissing modifier does not make the write safe; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestHTMLSignalObjectWriteOfBoundSignalIsReported pins the data-signals={obj}
+// form (mergePatch) in JS shape. In real mark-up the quotes are templ-escaped to
+// `&quot;`, so the JSON shape is covered by the entity-decoding test below.
+func TestHTMLSignalObjectWriteOfBoundSignalIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<div data-signals="{searchQuery: 'seed'}"></div>`,
+		"package p\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r == nil {
+		t.Errorf("expected the object-form write to be reported; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestHTMLSignalObjectWithEscapedQuotesIsReported pins the entity decode: templ
+// writes the object's quotes as `&quot;`, so without unescaping the keys the
+// JSON form — the shape templ actually emits — went unreported.
+//
+// red: the value `{&quot;searchQuery&quot;:&quot;s&quot;}` matched no key.
+func TestHTMLSignalObjectWithEscapedQuotesIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<div data-signals="{&quot;searchQuery&quot;:&quot;s&quot;}"></div>`,
+		"package p\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r == nil {
+		t.Errorf("templ-escaped quotes must be decoded before key extraction; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestHTMLSignalObjectWithIfMissingIsClean pins the modifier form of the object
+// attribute: `data-signals__ifmissing={obj}` is mergePatch(..., {ifMissing}).
+func TestHTMLSignalObjectWithIfMissingIsClean(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<div data-signals__ifmissing="{searchQuery: 'seed'}"></div>`,
+		"package p\n",
+	)
+	if rs := boundResults(t, dir); len(rs) != 0 {
+		t.Errorf("data-signals__ifmissing must be honoured; got %v", codes(rs))
+	}
+}
+
+// TestHTMLSignalWriteInCommentOrScriptIsNotReported pins the two false positives
+// a naive scan produced: the house style documents attributes inside HTML
+// comments, and a <script> body may mention the attribute in a string. Neither
+// applies the patch.
+//
+// red: both reported CLIENT_BOUND_SIGNAL_WRITTEN before the strip helpers were
+// reused.
+func TestHTMLSignalWriteInCommentOrScriptIsNotReported(t *testing.T) {
+	cases := map[string]string{
+		"html comment": `<input data-bind="searchQuery" />
+<!-- example: <span data-signals:searchQuery="seed"></span> -->`,
+		"script body": `<input data-bind="searchQuery" />
+<script>
+  // mentions data-signals:searchQuery in prose
+</script>`,
+	}
+	for name, templ := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := writeProject(t, templ, "package p\n")
+			if rs := boundResults(t, dir); len(rs) != 0 {
+				t.Errorf("%s should not report; got %v", name, codes(rs))
+			}
+		})
+	}
+}
+
+// TestHTMLSignalTemplExprObjectIsNotReported pins the deliberate blindness to
+// `data-signals={ expr }`: a dynamically-built object's keys are not statically
+// knowable, and guessing at them would be the false positive this check must
+// avoid. (The Go-side rule is what catches the struct that feeds the expr.)
+func TestHTMLSignalTemplExprObjectIsNotReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<div data-signals={ signals }></div>`,
+		"package p\n",
+	)
+	if rs := boundResults(t, dir); len(rs) != 0 {
+		t.Errorf("a templ expression's keys are unknowable; got %v", codes(rs))
+	}
+}
+
+// TestHTMLSignalUnboundKeyIsNotReported is the control: a signals attribute
+// that patches a signal no input owns is not this rule's business.
+func TestHTMLSignalUnboundKeyIsNotReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="searchQuery" />
+<div data-signals="{otherThing: 1}"></div>`,
+		"package p\n",
+	)
+	if rs := boundResults(t, dir); len(rs) != 0 {
+		t.Errorf("only bound signals are this rule's business; got %v", codes(rs))
+	}
+}
+
+// TestHTMLSignalDottedPathRootIsReported pins the path case the bound set
+// already models: a write to the ROOT (`data-signals:user`) replaces the whole
+// object, so it clobbers an input bound to `user.name`.
+func TestHTMLSignalDottedPathRootIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="user.name" />
+<span data-signals:user="x"></span>`,
+		"package p\n",
+	)
+	if r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN"); r == nil {
+		t.Errorf("a write to the path root clobbers the bound leaf; got %v", codes(boundResults(t, dir)))
+	}
+}

@@ -219,7 +219,7 @@ project, say so once in the config rather than trusting every future edit.
   line. A constant whose value is computed rather than literal is out of
   scope and stays unreported.
 - **`CLIENT_BOUND_SIGNAL_NO_OMITEMPTY`** — A struct field whose JSON name matches a `data-bind` signal has a `json:"x"` tag **without** `omitempty`. The zero value still marshals (`"x":""`), so **every** merge that carries the struct overwrites the bound input — even after someone removes the field from the merge call, which is why this one is an error. Severity: error.
-- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — Go writes a signal that some input binds two-way with `data-bind`. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background merge (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. Severity: error. Suppressible with a reason (`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <why>`), because the page-render seed is a real, correct write.
+- **`CLIENT_BOUND_SIGNAL_WRITTEN`** — the server writes a signal that some input binds two-way with `data-bind`, on **any** of three doors: a Go merge, a `data-signals:key` attribute, or a `data-signals={obj}` attribute. Datastar writes an incoming signal value straight back into the element (`bind.ts` wraps `syncElement` in an effect), and the server's copy always lags what the user is typing, so a background write (stream handshake, record-event re-list, any patch-signals) can overwrite live input; the debounced request then reads the clobbered value and the feature silently does nothing. Severity: error. Suppressible with a reason (`// datastar-lint:ignore CLIENT_BOUND_SIGNAL_WRITTEN — <why>`), because the page-render seed is a real, correct write.
 
 ```go
 // .templ:  <input data-bind="searchQuery" />   <- the input owns this
@@ -237,7 +237,20 @@ merge(map[string]any{"searchQuery": query})
 type Signals struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
 }
+
+// clean: the field never reaches the wire at all — the strongest statement
+// that it cannot clobber the input, and the idiomatic way to keep a
+// server-computed seed OUT of data-signals while still rendering it into
+// the input's value=
+type Signals struct {
+	SearchQuery string `json:"-"`
+}
 ```
+
+`json:"-"` is an explicit exclusion, not a missing tag: the field is resolved as
+"no wire name" and never falls back to a name match. `json:",omitempty"` and
+`json:""` (empty name) mean "use the Go field name", exactly as `encoding/json`
+reads them.
 
 Four write forms are recognized, because a project uses all four: a map key
 (`map[string]any{"x": v}`), a map key written as a **string constant**
@@ -247,11 +260,21 @@ Four write forms are recognized, because a project uses all four: a map key
 binding (`data-bind="user.name"`) also arms its root, since writing the whole
 `user` object replaces the value the input reads.
 
+**The mark-up side is checked too.** A server-rendered signals attribute
+re-applies on every morph, so `data-signals:key` (upstream `mergePaths`) and
+`data-signals={obj}` (`mergePatch`) clobber live input exactly like a Go merge.
+Both are reported when the key — or a path root — is bound. Both honour the
+`ifmissing` modifier (`data-signals:key__ifmissing`, `data-signals__ifmissing`),
+which upstream turns into `{ifMissing: true}`. `data-signals={ expr }` is
+deliberately left alone: a dynamically-built object's keys are not statically
+knowable, and the Go-side rule catches the struct that feeds the expression.
+
 **The documented escape hatch is honoured.** `onlyIfMissing` makes the client
 apply a signal only when one of that name does not already exist, so it cannot
 overwrite a bound input — that is what the SDK's
-`MarshalAndPatchSignalsIfMissing` and `WithOnlyIfMissing(true)` are for. A write
-routed through either is not reported:
+`MarshalAndPatchSignalsIfMissing` and `WithOnlyIfMissing(true)` are for, and what
+the HTML-side `ifmissing` modifier maps to. A write routed through any of them is
+not reported:
 
 ```go
 // clean: the client refuses to overwrite an existing signal

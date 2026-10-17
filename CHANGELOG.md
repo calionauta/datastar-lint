@@ -5,6 +5,49 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-17
+
+### Fixed
+
+- **`json:"-"` no longer reported as a write.** `parseJSONTag` returned "no tag"
+  for an explicit `json:"-"`, so the field never entered the field->JSON index
+  and name resolution fell through to the case-insensitive fallback against the
+  bound set — which re-found `searchQuery` by name and reported a write the tag
+  had expressly precluded. The strongest possible statement ("never serialize
+  this") was read as its absence. Excluded fields are now tracked as such and
+  resolve to no wire name, which is what makes the idiomatic fix possible:
+
+  ```go
+  type Signals struct {
+      SearchQuery string `json:"-"`              // not on the wire at all
+  }
+  // <input value={ signals.SearchQuery } data-bind="searchQuery">
+  ```
+
+  The input's `value=` seeds the signal through `data-bind` (upstream
+  `bind.ts` does `mergePaths([[path, get(el, type)]], { ifMissing: true })`),
+  so the server never writes it and no suppression is needed.
+- **An empty tag name (`json:""` / `json:",omitempty"`) resolves to the Go
+  field name**, as `encoding/json` reads it. It used to return ok=false, so such
+  a field was invisible to both checks — a silent false negative.
+
+### Added
+
+- **Bound-signal writes that arrive through the mark-up are now reported.** The
+  Go-side checks saw a merge call and a struct tag, but not the write the
+  template performs itself. `data-signals:key` is `mergePaths` and
+  `data-signals={obj}` is `mergePatch` upstream
+  (`library/src/plugins/attributes/signals.ts`), and both re-apply on every
+  morph, so a server-rendered signals attribute clobbers live input exactly like
+  a Go merge — the same bug, a third door. Both forms are now checked against
+  the same bound set, and both honour the `ifmissing` modifier, which upstream
+  turns into `{ ifMissing: true }`. `data-signals={ expr }` is deliberately left
+  alone: a dynamically-built object's keys are not statically knowable, and the
+  Go-side rule catches the struct that feeds the expression.
+
+  HTML comments and `<script>` bodies are blanked first (offset-preserving), so
+  the house style of documenting an attribute inside a comment does not report.
+
 ## [0.15.0] - 2026-10-17
 
 ### Added
