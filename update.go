@@ -40,8 +40,8 @@ var osExecutable = os.Executable
 // ---------------------------------------------------------------------------
 
 type ghRelease struct {
-	TagName string     `json:"tag_name"`
-	Assets  []ghAsset  `json:"assets"`
+	TagName string    `json:"tag_name"`
+	Assets  []ghAsset `json:"assets"`
 }
 
 type ghAsset struct {

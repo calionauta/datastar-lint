@@ -261,6 +261,12 @@ type goIndex struct {
 	// resolution key when a struct is declared outside the scanned files and
 	// its tag (therefore its wire name) is unknown.
 	bound map[string]bool
+	// consts maps a package-level string constant to its value. Signal names
+	// are routinely declared as constants ("signalChatPrompt = \"chatPrompt\"")
+	// so a map key written as a bare identifier resolved to nothing and every
+	// such write was invisible — 39 of them in the project that surfaced this
+	// class, including the one that clobbers a bound composer.
+	consts map[string]string
 	// fieldToJSON maps a Go field name to the JSON name it serializes to.
 	// Populated from every struct type declaration in the scanned files, so a
 	// literal or assignment can be resolved without type information.
@@ -324,7 +330,11 @@ func (i *goIndex) signalName(field string) string {
 // parseGoIndex parses every Go file once and collects the struct field table
 // plus every signal write.
 func parseGoIndex(files []string, bound map[string]bool) *goIndex {
-	idx := &goIndex{fieldToJSON: make(map[string]string), bound: bound}
+	idx := &goIndex{
+		fieldToJSON: make(map[string]string),
+		consts:      collectStringConsts(files),
+		bound:       bound,
+	}
 	fset := token.NewFileSet()
 
 	type parsed struct {
@@ -403,6 +413,18 @@ func parseGoIndex(files []string, bound map[string]bool) *goIndex {
 				// Map key (string literal) — the name is already the wire name.
 				if lit, ok := node.Key.(*ast.BasicLit); ok && lit.Kind == token.STRING {
 					if name := unquote(lit.Value); isSignalName(name) {
+						idx.writes = append(idx.writes, signalWrite{
+							file: p.path, line: fset.Position(node.Pos()).Line,
+							field: name, isJSON: true,
+						})
+					}
+					return true
+				}
+				// Map key written as a string CONSTANT (signalChatPrompt: "").
+				// Without this the constant form — the majority in a real tree —
+				// resolved to nothing and every such write went unreported.
+				if ident, ok := node.Key.(*ast.Ident); ok && !isExported(ident.Name) {
+					if name, known := idx.consts[ident.Name]; known && isSignalName(name) {
 						idx.writes = append(idx.writes, signalWrite{
 							file: p.path, line: fset.Position(node.Pos()).Line,
 							field: name, isJSON: true,

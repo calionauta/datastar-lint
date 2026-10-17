@@ -408,3 +408,84 @@ func f(v string) {
 		t.Errorf("a cross-package struct literal was missed; got %v", codes(boundResults(t, dir)))
 	}
 }
+
+// TestConstantKeyedWriteIsReported pins the gap that hid two real sites in the
+// project that surfaced this class: signal names are routinely declared as
+// string constants, and a map key written as a bare identifier
+// (`signalChatPrompt: ""`) resolved to nothing, so every constant-keyed write
+// was invisible. That is the MAJORITY form in a real tree — 39 such keys in
+// gogogo, two of them writing a signal a `data-bind` input owns.
+//
+// red: before constant resolution, this produced no findings at all.
+func TestConstantKeyedWriteIsReported(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="chatPrompt" />`,
+		`package p
+
+const signalChatPrompt = "chatPrompt"
+
+func f(sse *SSE) {
+	sse.MarshalAndPatchSignals(map[string]any{
+		signalChatPrompt: "",
+	})
+}
+`,
+	)
+	r := hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN")
+	if r == nil {
+		t.Fatalf("a constant-keyed write was missed; got %v", codes(boundResults(t, dir)))
+	}
+	if r.Attribute != "chatPrompt" {
+		t.Errorf("attribute = %q, want the constant's VALUE", r.Attribute)
+	}
+}
+
+// TestConstantKeyedWriteInAGroupedConstBlock covers the `const ( ... )` form,
+// which is how a page's signals are usually declared together.
+func TestConstantKeyedWriteInAGroupedConstBlock(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="genuiPrompt" />`,
+		`package p
+
+const (
+	signalGenuiPending = "genui_pending"
+	signalGenuiPrompt  = "genuiPrompt"
+)
+
+func f(sse *SSE) {
+	sse.MarshalAndPatchSignals(map[string]any{
+		signalGenuiPending: true,
+		signalGenuiPrompt:  "",
+	})
+}
+`,
+	)
+	if hasCode(t, boundResults(t, dir), "CLIENT_BOUND_SIGNAL_WRITTEN") == nil {
+		t.Errorf("a grouped-const key was missed; got %v", codes(boundResults(t, dir)))
+	}
+}
+
+// TestConstantPointingElsewhereStaysSilent is the precision counterpart: a
+// constant whose value is not a bound signal must not produce a finding, and
+// an unexported identifier that is not a known constant must stay quiet
+// rather than be guessed at.
+func TestConstantPointingElsewhereStaysSilent(t *testing.T) {
+	dir := writeProject(t,
+		`<input data-bind="chatPrompt" />`,
+		`package p
+
+const signalTab = "sidebarTab"
+const notAConstant = 1
+
+func f(sse *SSE, v string) {
+	sse.MarshalAndPatchSignals(map[string]any{
+		signalTab: "queue",
+		v:         "dynamic",
+	})
+}
+`,
+	)
+	if got := boundResults(t, dir); len(got) != 0 {
+		t.Errorf("unrelated constants must stay silent; got %v", codes(got))
+	}
+}

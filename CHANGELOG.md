@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-10-17
+
+### Fixed
+
+- **String constants are resolved, in both checks that need them.** Signal
+  names and selectors are routinely written as package-level constants
+  (`const signalChatPrompt = "chatPrompt"`, `const selChat = "#chat-messages"`),
+  and both the bound-signal check and the selector cross-reference only
+  understood literals. A constant-keyed write was therefore invisible to
+  `CLIENT_BOUND_SIGNAL_WRITTEN`, and a constant selector was invisible to
+  `CROSSREF_ORPHAN_SELECTOR`.
+
+  In the project that surfaced this, 39 map keys use the constant form and two
+  of them write a signal a `data-bind` input owns — so v0.14.1 reported 2
+  `CLIENT_BOUND_SIGNAL_WRITTEN` findings where the corrected check reports 4.
+  One of the newly visible sites is a `newTitle: ""` clear issued in the same
+  response as the create that produced the row, which the project's own browser
+  smoke already worked around as a race (typing the next title too early
+  truncated it to empty).
+
+  Both checks now share one `collectStringConsts` / `resolveName` pair
+  (`consts.go`) — the resolver is the same code, so the two cannot drift.
+
+### Added
+
+- `CLIENT_BOUND_SIGNAL_WRITTEN` and `CROSSREF_ORPHAN_SELECTOR` now report the
+  resolved name, so a finding can be traced back to the constant that carries
+  it.
+
 ## [0.14.1] - 2026-10-17
 
 ### Fixed

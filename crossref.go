@@ -28,7 +28,7 @@ func CrossReference(goFiles, htmlFiles []string) []lintResult {
 		return nil
 	}
 
-	selectors := collectGoSelectors(goFiles)
+	selectors := collectGoSelectors(goFiles, collectStringConsts(goFiles))
 	if len(selectors) == 0 {
 		return nil
 	}
@@ -82,7 +82,16 @@ var goSelectorRE = regexp.MustCompile(
 		`"#?([^"]+)"`,
 )
 
-func collectGoSelectors(files []string) []selectorRef {
+// The identifier-argument form: WithSelector(selChat), (#id stripped by the
+// const's value). Captures package prefix, the argument, and the function name.
+var goSelectorConstRE = regexp.MustCompile(
+	`(\w+\.)?` + `(WithSelector|WithSelectorID|WithSelectorf|RemoveElement)` +
+		`\(\s*` +
+		`([A-Za-z_][A-Za-z0-9_]*)` +
+		`\s*[,)]`,
+)
+
+func collectGoSelectors(files []string, consts map[string]string) []selectorRef {
 	var refs []selectorRef
 	for _, f := range files {
 		src, err := os.ReadFile(f)
@@ -93,6 +102,28 @@ func collectGoSelectors(files []string) []selectorRef {
 		for i, line := range lines {
 			matches := goSelectorRE.FindStringSubmatch(line)
 			if matches == nil {
+				// The selector may be a string constant
+				// (WithSelector(selChat)). The literal regex cannot see that,
+				// so a constant selector was invisible to the cross-reference
+				// — the same gap the bound-signal check had. Resolve the
+				// argument through the const table; the display string keeps
+				// the source spelling so a report names what the code says.
+				for _, m := range goSelectorConstRE.FindAllStringSubmatch(line, -1) {
+					name := m[3]
+					id, ok := consts[name]
+					if !ok || id == "" {
+						continue
+					}
+					pkg := m[1]
+					funcName := m[2]
+					display := funcName + "(" + name + ")"
+					if pkg != "" {
+						display = pkg + display
+					}
+					refs = append(refs, selectorRef{
+						file: f, line: i + 1, id: strings.TrimPrefix(id, "#"), ref: display,
+					})
+				}
 				continue
 			}
 			pkg := matches[1]
