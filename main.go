@@ -119,11 +119,13 @@ func main() {
 	flag.StringVar(&_extDeprecated, "ext", "", "Deprecated: analyzers control their own extensions")
 
 	var (
-		showVersion bool
-		runUpdate   bool
-		checkUpdate bool
+		showVersion    bool
+		listAttributes bool
+		runUpdate      bool
+		checkUpdate    bool
 	)
 	flag.BoolVar(&showVersion, "version", false, "Show version and exit")
+	flag.BoolVar(&listAttributes, "list-attributes", false, "Print the Datastar attributes this build knows (one per line) and exit")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "Verbose debug output")
 	flag.BoolVar(&cfg.onlyErrors, "only-errors", false, "Only show errors (hide warnings and hints)")
 	flag.BoolVar(&runUpdate, "update", false, "Update datastar-lint to the latest version and exit")
@@ -135,6 +137,9 @@ func main() {
 	case showVersion:
 		fmt.Println(versionLine())
 		os.Exit(0)
+	case listAttributes:
+		printAttributes(os.Stdout)
+		return
 	case runUpdate:
 		if err := SelfUpdate(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: update failed: %v\n", err)
