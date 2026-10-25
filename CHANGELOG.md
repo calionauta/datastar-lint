@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0](https://github.com/calionauta/datastar-lint/compare/v0.16.2...v0.17.0) (2026-10-25)
+
+
+### Added
+
+* --format sarif, and ship linux/arm64 binaries ([#4](https://github.com/calionauta/datastar-lint/issues/4)) ([5a61d7b](https://github.com/calionauta/datastar-lint/commit/5a61d7be782c567455e2058113c61e50e32e7bb7))
+
 ## [0.16.2] - 2026-10-17
 
 ### Fixed
