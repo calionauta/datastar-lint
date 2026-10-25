@@ -18,7 +18,7 @@
 //	-r, --recursive          Walk directories recursively
 //	-a, --analyzers string   Comma-separated analyzers (default: "html")
 //	-s, --strict             Enable strict checks (Pro attributes, etc.)
-//	--format string          Output format: text or json
+//	--format string          Output format: text, json or sarif
 //
 // Install:
 //
@@ -106,7 +106,7 @@ func main() {
 	flag.StringVar(&analyzerList, "analyzers", "html", "Comma-separated analyzers")
 	flag.BoolVar(&cfg.strict, "s", false, "Enable strict checks (Pro attr unknowns, etc.)")
 	flag.BoolVar(&cfg.strict, "strict", false, "Enable strict checks (Pro attr unknowns, etc.)")
-	flag.StringVar(&cfg.format, "format", "text", "Output format: text or json")
+	flag.StringVar(&cfg.format, "format", "text", "Output format: text, json or sarif")
 
 	// --config loads a .datastar-lint.yaml with an allowed attributes list
 	// of intentional custom data-* attributes (read by app JS, not Datastar).
@@ -240,6 +240,20 @@ func main() {
 		}
 		return a.Code < b.Code
 	})
+
+	if cfg.format == "sarif" {
+		if err := writeSARIF(os.Stdout, results, version); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			drainUpdate()
+			os.Exit(1)
+		}
+		if countErrors(results) > 0 {
+			drainUpdate()
+			os.Exit(1)
+		}
+		drainUpdate()
+		return
+	}
 
 	if cfg.format == "json" {
 		out, err := json.MarshalIndent(results, "", "  ")
