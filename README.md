@@ -187,7 +187,7 @@ project, say so once in the config rather than trusting every future edit.
 - **`KEY_NOT_ALLOWED`** — Attributes that don't accept sub-keys (`:signalName` syntax) reject them.
 - **`INVALID_MODIFIER`** — Unknown modifiers on Datastar attributes.
 - **`PRO_ATTR`** — Datastar Pro-only attributes. Warning by default, error in strict mode.
-- **`FOREIGN_ATTR`** — Alpine.js/Vue.js leftovers (`x-data`, `v-if`, `@click`).
+- **`FOREIGN_ATTR`** — Alpine.js/Vue.js leftovers (`x-data`, `v-if`, `@click`), in `.html` and `.templ` alike: `.templ` is parsed from a sanitized copy, so a Go expression in the same tag cannot be mistaken for one.
 - **`INLINE_JS_HANDLER`** — Native inline handlers (`onclick`, `onsubmit`, ...). Datastar never sees them: no signal graph, no modifiers (`__prevent`, `__debounce`), no `clientID` de-duplication — and next to a `data-on:*` handler they fire twice. Use `data-on:<event>`. Severity: error. A templ Go expression (`onclick={ handler }`) is not JavaScript and is not flagged; JSX props (`onClick`) live in `.tsx`/`.jsx` files and are skipped.
 - **`PATCH_ELEMENTS_NO_ID`** — Element with `data-on:load` (SSE) or `data-on-signal-patch` but no `id`. The JS client needs an `#id` anchor to morph the fragment.
 - **`ON_LOAD_NO_EVENT`** — `data-on:load` on an element that never fires the native `load` event (`<div>`, `<span>`, etc.). The native `load` event only fires on `<body>`, `<img>`, `<script>`, `<link>`, `<video>`, and other elements with external resource loading. On all other elements the callback silently never executes. Use `data-init` instead, or add the `__window` modifier. Severity: error.

@@ -133,3 +133,48 @@ templ P() {
 		t.Errorf("second finding line = %d, want 6", lines[1])
 	}
 }
+
+// Markup inside a comment is not an element: the parser discards it, so a scan
+// that anchored the commented tag would report its line.
+func TestPositionIgnoresCommentedMarkup(t *testing.T) {
+	src := `package x
+
+templ P() {
+	<!-- <input data-bind="ghost"/> -->
+	<input
+		aria-label="q" data-bind="q"/>
+}
+`
+	got := findByCode(lintFixture(t, ".templ", src), "BIND_MISSING_NAME")
+	if got == nil {
+		t.Fatal("BIND_MISSING_NAME not reported")
+	}
+	if got.Line < 5 {
+		t.Errorf("line = %d, want the real input on line 5, not the commented one", got.Line)
+	}
+}
+
+// A string inside <script> can contain "<input ...>"; the parser keeps it as
+// text, so it must not be anchored as an element.
+func TestPositionIgnoresMarkupInScript(t *testing.T) {
+	src := `package x
+
+templ P() {
+	<script>const t = "<input data-bind='ghost'>";</script>
+	<input
+		aria-label="q" data-bind="q"/>
+}
+`
+	results := lintFixture(t, ".templ", src)
+	var lines []int
+	for _, r := range results {
+		if r.Code == "BIND_MISSING_NAME" {
+			lines = append(lines, r.Line)
+		}
+	}
+	for _, l := range lines {
+		if l == 4 {
+			t.Errorf("finding anchored to the markup inside <script> (line 4); real input is on line 5")
+		}
+	}
+}

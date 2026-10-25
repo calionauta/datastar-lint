@@ -51,8 +51,9 @@ func isDatastarPrefix(name string) bool {
 
 // isJSLike reports whether path is a JavaScript/TypeScript source file. The
 // golang.org/x/net/html parser mangles JS/TS expressions (generics Foo<Bar>,
-// comparisons a < b, arrow functions) into spurious attributes, so foreign-attr
-// detection is skipped for these — mirroring the existing .templ skip.
+// comparisons a < b, arrow functions) into spurious attributes, so HTML-layer
+// checks are skipped for these. (.templ no longer needs the skip: it is parsed
+// from a sanitized copy that keeps Go expressions out of the attribute list.)
 func isJSLike(path string) bool {
 	switch {
 	case strings.HasSuffix(path, ".tsx"),

@@ -85,13 +85,16 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 	}
 
 	// 1. Check for foreign (non-Datastar reactive) attributes.
-	// Skip FOREIGN_ATTR check on .templ files: Go template expressions { ... }
-	// embed Go code containing @post(), @get(), etc. which the golang.org/x/net/html
-	// parser mangles into separate "attributes", producing false positives.
-	// Same applies to JS/TS source (.tsx/.jsx/.ts/.js), where arrow functions,
-	// generics (Foo<Bar>), and comparisons (a < b) are mangled into fake
-	// attributes. Only run this check on pure .html/.htm files.
-	if !strings.HasSuffix(path, ".templ") && !isJSLike(path) {
+	//
+	// .templ files used to be skipped here: Go expressions in { ... } values
+	// mangle into bogus attributes, and "@post(...)" inside them looked like
+	// Alpine syntax. The parser now reads a length-preserving sanitized copy of
+	// the file (see sanitizeTemplAttrs), so the attribute list is the real one
+	// and the skip is no longer needed.
+	//
+	// JS/TS source stays skipped: arrow functions, generics (Foo<Bar>) and
+	// comparisons (a < b) are mangled into fake attributes by the HTML parser.
+	if !isJSLike(path) {
 		for _, a := range foreignAttrsFound {
 			line, col := getAttrPosition(n, a)
 			*results = append(*results, lintResult{
