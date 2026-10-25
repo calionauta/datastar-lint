@@ -1,0 +1,44 @@
+name: release-please
+
+# release-please reads conventional commits on master and keeps ONE open release
+# PR. Merging that PR bumps the annotated `version` constant in main.go, updates
+# CHANGELOG.md, tags, and creates the GitHub release.
+#
+# The binaries come from release.yml, and it has to be DISPATCHED: release-please
+# creates the tag with the workflow token, and GitHub does not start a run from an
+# event that token produced (anti-recursion), so `on: push: tags` never fires for
+# a release-please tag. That is not theory: the same setup shipped eight gogogo
+# releases with zero assets before the dispatch step was added.
+#
+# `TestFallbackVersionTracksChangelog` stays as the backstop that first caught a
+# stale version; this workflow removes the manual steps that produced it.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Dispatch the binary build for the released tag
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"

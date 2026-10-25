@@ -1,0 +1,39 @@
+name: release
+
+# Builds the release binaries (goreleaser).
+#
+# Two triggers, and the second is load-bearing:
+#   * `workflow_dispatch` with a tag input — the bridge from release-please
+#     (a tag created by GITHUB_TOKEN does not fire `push: tags`).
+#   * `push: tags: v*` — a hand-cut tag, kept as the manual escape hatch.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (e.g. v0.17.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GH_TOKEN: ${{ github.token }}
