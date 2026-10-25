@@ -11,9 +11,10 @@ import (
 // Each entry defines whether sub-keys (:) are allowed and whether the
 // attribute is Pro-only (requires commercial license).
 type attrInfo struct {
-	Pro       bool   // requires commercial license
-	Desc      string // human-readable description
-	AllowsKey bool   // accepts data-{name}:{key} syntax
+	Pro        bool   // requires commercial license
+	ThirdParty bool   // owned by another library (DaisyUI, Tally, ...): not Datastar
+	Desc       string // human-readable description
+	AllowsKey  bool   // accepts data-{name}:{key} syntax
 }
 
 var knownAttrs = map[string]attrInfo{
@@ -21,11 +22,11 @@ var knownAttrs = map[string]attrInfo{
 	"data-attr": {AllowsKey: true, Desc: "sets any HTML attribute from expression"},
 	"data-bind": {AllowsKey: true, Desc: "two-way data binding on input/select/textarea"},
 	// Common third-party data-* attrs (DaisyUI, icons, iframe embeds) — not Datastar:
-	"data-theme":                  {AllowsKey: false, Desc: "DaisyUI theme selector"},
-	"data-tip":                    {AllowsKey: false, Desc: "DaisyUI tooltip content"},
-	"data-disabled":               {AllowsKey: false, Desc: "(use data-attr:disabled instead)"},
-	"data-tally-src":              {AllowsKey: false, Desc: "Tally.so iframe embed source"},
-	"data-model-id":               {AllowsKey: false, Desc: "Custom app attribute (not Datastar)"},
+	"data-theme":                  {ThirdParty: true, Desc: "DaisyUI theme selector"},
+	"data-tip":                    {ThirdParty: true, Desc: "DaisyUI tooltip content"},
+	"data-disabled":               {ThirdParty: true, Desc: "(use data-attr:disabled instead)"},
+	"data-tally-src":              {ThirdParty: true, Desc: "Tally.so iframe embed source"},
+	"data-model-id":               {ThirdParty: true, Desc: "Custom app attribute (not Datastar)"},
 	"data-class":                  {AllowsKey: true, Desc: "toggles CSS class based on expression"},
 	"data-computed":               {AllowsKey: true, Desc: "creates computed (derived) signal"},
 	"data-effect":                 {Desc: "executes expression on signal change"},

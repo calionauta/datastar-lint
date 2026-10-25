@@ -1,0 +1,36 @@
+name: datastar-drift
+
+# Keeps the attribute vocabulary honest against upstream Datastar.
+#
+# knownAttrs is authored in this repo: Datastar publishes no SKILL.md/llms.txt
+# to vendor and pin, so nothing else notices when a release adds an attribute —
+# this tool reports it as unknown, silently, until someone hits it.
+# bin/check-datastar-drift.sh diffs the list against the reference page in both
+# directions and fails on any difference.
+#
+# Scheduled rather than per-push: the finding is "upstream moved", which no push
+# causes, and the check needs the network. It never gates an unrelated PR.
+on:
+  schedule:
+    # Wednesdays, off the hour so it does not pile onto the midnight-UTC stampede.
+    - cron: "41 9 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datastar-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vocabulary matches upstream
+        run: bash bin/check-datastar-drift.sh

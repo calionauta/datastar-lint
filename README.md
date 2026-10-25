@@ -77,6 +77,9 @@ datastar-lint -r --config .datastar-lint.yaml ./src/
 
 Run `datastar-lint --version` to print the linter version and the Datastar release it was verified against. Exit code is `0` on clean, `1` on issues.
 
+`-list-attributes` prints the Datastar attributes this build knows (one per line,
+sorted) and exits — it is the machine-readable side of the [drift check](#upstream-drift).
+
 `--format` selects the output: `text` (default), `json`, or `sarif` for GitHub code
 scanning — with SARIF the findings become PR annotations and Security-tab alerts
 instead of lines in a CI log.
@@ -390,6 +393,20 @@ type Analyzer interface {
 Each analyzer registers itself via `init()` and `RegisterAnalyzer()`. The `run()` function collects files per-analyzer and dispatches linting. When both `go` and `html` analyzers run, a cross-reference step automatically checks for orphan selectors.
 
 To add a new language, create a file implementing `Analyzer`, call `RegisterAnalyzer()` in `init()`. (Analyzers currently ship in every build; see [Enabling analyzers](#enabling-analyzers).)
+
+## Upstream drift
+
+The attribute vocabulary in `attrs.go` is authored here, not derived from a
+vendored upstream file (Datastar publishes no `SKILL.md`/`llms.txt`), so a new
+Datastar release can add an attribute this tool then reports as unknown —
+silently, until someone hits it.
+
+`bin/check-datastar-drift.sh` closes that hole: it extracts the core attribute
+anchors from <https://data-star.dev/reference/attributes> (the Pro section is
+excluded — Pro is a paid product, out of scope), diffs them against
+`datastar-lint -list-attributes` in both directions, and fails on any
+difference. `datastar-drift.yml` runs it weekly; run it locally before a
+release. `--fixture <page.html>` checks a saved page (no network).
 
 ## Where to run it
 
