@@ -96,6 +96,7 @@ var knownCodes = map[string]bool{
 	"EXPR_MISSING_DOLLAR":              true,
 	"FILE_OPEN":                        true,
 	"FOREIGN_ATTR":                     true,
+	"INLINE_JS_HANDLER":                true,
 	"FORM_MISSING_ENCTYPE":             true,
 	"FORM_SUBMIT_MISSING":              true,
 	"FORM_SUBMIT_NO_PREVENT":           true,

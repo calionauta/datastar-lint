@@ -228,10 +228,16 @@ func TestForeignAttr(t *testing.T) {
 		t.Errorf("expected FOREIGN_ATTR on .html; got %v", codes(results))
 	}
 
-	// On .templ files, the FOREIGN_ATTR check is skipped (Go template noise).
-	results = lintString(t, config{}, `<div x-data="{a:1}"></div>`, "templ")
-	if r := hasCode(t, results, "FOREIGN_ATTR"); r != nil {
-		t.Errorf(".templ should skip FOREIGN_ATTR, got %v", codes(results))
+	// On .templ files the check runs too: the parser reads a sanitized copy
+	// (templ Go expressions become quoted placeholders), so there is no noise to
+	// skip. A Go expression before the leftover must not create a false positive.
+	results = lintString(t, config{}, `<div class={ templ.KV("a", x > 1) } x-data="{a:1}"></div>`, "templ")
+	r := hasCode(t, results, "FOREIGN_ATTR")
+	if r == nil {
+		t.Fatalf(".templ should flag FOREIGN_ATTR too; got %v", codes(results))
+	}
+	if r.Attribute != "x-data" {
+		t.Errorf("FOREIGN_ATTR on %q, want x-data (the Go expression must not be reported)", r.Attribute)
 	}
 }
 

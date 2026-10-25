@@ -51,8 +51,9 @@ func isDatastarPrefix(name string) bool {
 
 // isJSLike reports whether path is a JavaScript/TypeScript source file. The
 // golang.org/x/net/html parser mangles JS/TS expressions (generics Foo<Bar>,
-// comparisons a < b, arrow functions) into spurious attributes, so foreign-attr
-// detection is skipped for these — mirroring the existing .templ skip.
+// comparisons a < b, arrow functions) into spurious attributes, so HTML-layer
+// checks are skipped for these. (.templ no longer needs the skip: it is parsed
+// from a sanitized copy that keeps Go expressions out of the attribute list.)
 func isJSLike(path string) bool {
 	switch {
 	case strings.HasSuffix(path, ".tsx"),
@@ -62,6 +63,35 @@ func isJSLike(path string) bool {
 		return true
 	}
 	return false
+}
+
+// inlineHandlerEvent reports whether name is a native DOM event-handler
+// attribute (onclick, onsubmit, onchange, ...) and returns the event name after
+// the "on" prefix. Only all-lowercase names qualify: on* JavaScript properties
+// in JSX (onClick) reach this only through JS files, which are skipped.
+func inlineHandlerEvent(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	if !strings.HasPrefix(lower, "on") || len(lower) <= 2 {
+		return "", false
+	}
+	event := lower[2:]
+	for i := 0; i < len(event); i++ {
+		if event[i] < 'a' || event[i] > 'z' {
+			return "", false
+		}
+	}
+	return event, true
+}
+
+// rawAttrIsGoExpr reports whether attribute a on node n has an unquoted
+// { ... } value IN THE ORIGINAL SOURCE. The parsed value cannot answer this:
+// the sanitized copy given to the HTML parser replaced the expression, and the
+// unsanitized one is mangled into a lone "{". Raw bytes are the truth.
+func rawAttrIsGoExpr(n *html.Node, a html.Attribute) bool {
+	if curSrc == nil {
+		return false
+	}
+	return curSrc.attrValueIsExpr(n, a.Key)
 }
 
 func isForeignAttr(name string) bool {
