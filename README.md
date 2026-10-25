@@ -77,6 +77,10 @@ datastar-lint -r --config .datastar-lint.yaml ./src/
 
 Run `datastar-lint --version` to print the linter version and the Datastar release it was verified against. Exit code is `0` on clean, `1` on issues.
 
+`--format` selects the output: `text` (default), `json`, or `sarif` for GitHub code
+scanning — with SARIF the findings become PR annotations and Security-tab alerts
+instead of lines in a CI log.
+
 ### Available analyzers
 
 | Analyzer | Flag name | Extensions | Default? | Language |
