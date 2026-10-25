@@ -64,6 +64,35 @@ func isJSLike(path string) bool {
 	return false
 }
 
+// inlineHandlerEvent reports whether name is a native DOM event-handler
+// attribute (onclick, onsubmit, onchange, ...) and returns the event name after
+// the "on" prefix. Only all-lowercase names qualify: on* JavaScript properties
+// in JSX (onClick) reach this only through JS files, which are skipped.
+func inlineHandlerEvent(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	if !strings.HasPrefix(lower, "on") || len(lower) <= 2 {
+		return "", false
+	}
+	event := lower[2:]
+	for i := 0; i < len(event); i++ {
+		if event[i] < 'a' || event[i] > 'z' {
+			return "", false
+		}
+	}
+	return event, true
+}
+
+// rawAttrIsGoExpr reports whether attribute a on node n has an unquoted
+// { ... } value IN THE ORIGINAL SOURCE. The parsed value cannot answer this:
+// the sanitized copy given to the HTML parser replaced the expression, and the
+// unsanitized one is mangled into a lone "{". Raw bytes are the truth.
+func rawAttrIsGoExpr(n *html.Node, a html.Attribute) bool {
+	if curSrc == nil {
+		return false
+	}
+	return curSrc.attrValueIsExpr(n, a.Key)
+}
+
 func isForeignAttr(name string) bool {
 	for _, prefix := range foreignAttrs {
 		if strings.HasPrefix(name, prefix) && !strings.HasPrefix(name, "data-") {
