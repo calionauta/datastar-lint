@@ -38,7 +38,7 @@ import (
 
 // version is set at build time via ldflags or defaults to the latest tagged release.
 // release-please rewrites the annotated line on a release.
-var version = "0.16.2" // x-release-please-version
+var version = "0.17.0" // x-release-please-version
 
 // datastarTested is the latest Datastar release the rule set was verified
 // against. Bump it when rules are reviewed after a Datastar release.
