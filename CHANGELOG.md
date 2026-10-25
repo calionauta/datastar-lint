@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0](https://github.com/calionauta/datastar-lint/compare/v0.17.0...v0.18.0) (2026-10-25)
+
+
+### Added
+
+* **cli:** -list-attributes exposes the vocabulary, drift check guards it ([#8](https://github.com/calionauta/datastar-lint/issues/8)) ([b4e55ad](https://github.com/calionauta/datastar-lint/commit/b4e55ad4d5597995af4bb5701b62c3ba102e22ca))
+
+
+### Fixed
+
+* **ci:** goreleaser reads GITHUB_TOKEN, not GH_TOKEN ([#6](https://github.com/calionauta/datastar-lint/issues/6)) ([03e49c1](https://github.com/calionauta/datastar-lint/commit/03e49c14046c3d2b52990a48fa505297df8595e0))
+* **positions:** exact line/col, templ attributes after expressions, inline handlers ([#9](https://github.com/calionauta/datastar-lint/issues/9)) ([da10c12](https://github.com/calionauta/datastar-lint/commit/da10c121a0e9d755063c32f7b9e1667fcd50cf2d))
+
 ## [0.17.0](https://github.com/calionauta/datastar-lint/compare/v0.16.2...v0.17.0) (2026-10-25)
 
 
