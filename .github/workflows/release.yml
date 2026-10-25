@@ -36,4 +36,4 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
