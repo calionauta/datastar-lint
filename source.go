@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
-	"os"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -49,13 +47,114 @@ func newSource(b []byte) *source {
 	return s
 }
 
+// openingTagEnd returns the index of the '>' that closes the opening tag
+// starting at open. Quoted values and balanced {templ expressions} are skipped:
+// a '>' inside data-on:click="$x > 1" or value={ limit > 3 } is data, not a
+// tag boundary. Returns len(b) when the tag is unterminated.
+func openingTagEnd(b []byte, open int) int {
+	var quote byte
+	depth := 0
+	for i := open + 1; i < len(b); i++ {
+		c := b[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case '>':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(b)
+}
+
+// regionEnd clamps an exclusive end offset to n bytes (the package's min takes
+// three arguments and shadows the builtin).
+func regionEnd(end, n int) int {
+	if end+1 < n {
+		return end + 1
+	}
+	return n
+}
+
+// tagMatchesNode reports whether the raw opening tag in region declares the same
+// element and the same attribute names as node n. The tokenizer does the
+// comparison with exactly the parsing the DOM was built with, so a same-named
+// sibling with different attributes is rejected instead of being anchored.
+func tagMatchesNode(region []byte, n *html.Node) bool {
+	z := html.NewTokenizer(bytes.NewReader(region))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			return false
+		}
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		tok := z.Token()
+		if !strings.EqualFold(tok.Data, n.Data) || len(tok.Attr) != len(n.Attr) {
+			return false
+		}
+		want := make(map[string]bool, len(n.Attr))
+		for _, a := range n.Attr {
+			want[strings.ToLower(a.Key)] = true
+		}
+		for _, a := range tok.Attr {
+			if !want[strings.ToLower(a.Key)] {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// isNameByte reports whether c can continue an HTML tag name.
+func isNameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == ':' || c == '_'
+}
+
+// anchorAll assigns every element node its opening-tag offset in one pre-order
+// pass. Eager anchoring is what makes repeated tags correct: a lazy lookup only
+// ran for elements that produced a finding, so any element in between was never
+// consumed and the next `<tag` found could belong to a sibling — the reported
+// line then pointed at an unrelated element (a hidden input, in the wild).
+func (s *source) anchorAll(root *html.Node) {
+	if s == nil || len(s.bytes) == 0 || root == nil {
+		return
+	}
+	s.cursor = 0
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if off, ok := s.anchorFor(n); ok {
+				s.anchors[n] = off
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
 // anchorFor returns the byte offset of node n's opening tag, memoized per node.
 //
-// Two lookups happen for one element when it carries more than one attribute,
-// and the walk revisits the same tag for every sibling. Memoizing by node
-// identity makes both correct: repeats on one element reuse its anchor, while
-// the cursor has already advanced past it, so the next element resolves to its
-// own tag rather than re-finding this one.
+// The scan verifies each candidate with tagMatchesNode: a same-named element
+// with a different attribute set is a sibling, not this node. The first
+// candidate is kept as a fallback, so a node the parser normalized beyond
+// recognition still reports its tag's line instead of 0,0.
 func (s *source) anchorFor(n *html.Node) (int, bool) {
 	if s == nil || len(s.bytes) == 0 || n == nil {
 		return 0, false
@@ -64,24 +163,34 @@ func (s *source) anchorFor(n *html.Node) (int, bool) {
 		return off, true
 	}
 	tagLower := strings.ToLower(n.Data)
-	open := bytes.Index(s.bytes[s.cursor:], []byte("<"+tagLower))
-	if open < 0 {
-		if os.Getenv("DSLINT_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "[anchor] tag=%s cursor=%d open=-1\n", tagLower, s.cursor)
+	needle := []byte("<" + tagLower)
+	fallback := -1
+	for s.cursor < len(s.bytes) {
+		rel := bytes.Index(s.bytes[s.cursor:], needle)
+		if rel < 0 {
+			break
 		}
-		return 0, false
+		open := s.cursor + rel
+		after := open + len(needle)
+		if after < len(s.bytes) && isNameByte(s.bytes[after]) {
+			// <input must not match <inputx.
+			s.cursor = after
+			continue
+		}
+		end := openingTagEnd(s.bytes, open)
+		region := s.bytes[open:regionEnd(end, len(s.bytes))]
+		s.cursor = regionEnd(end, len(s.bytes))
+		if fallback < 0 {
+			fallback = open
+		}
+		if tagMatchesNode(sanitizeTemplAttrs(region), n) {
+			return open, true
+		}
 	}
-	open += s.cursor
-	s.anchors[n] = open
-	// Advance past this opening tag so the next element's lookup finds ITS tag.
-	// (Void/self-closing tags have no separate close tag, but the `>` of the
-	// opening tag is still the right boundary for position recovery.)
-	if close := bytes.IndexByte(s.bytes[open:], '>'); close >= 0 {
-		s.cursor = open + close + 1
-	} else {
-		s.cursor = open
+	if fallback >= 0 {
+		return fallback, true
 	}
-	return open, true
+	return 0, false
 }
 
 // locate finds `attr` on element n, returning its 1-based line and column. It
@@ -95,14 +204,9 @@ func (s *source) locate(n *html.Node, attr string) (line, col int) {
 		return 0, 0
 	}
 	b := s.bytes
-	// Find the end of this opening tag.
-	close := bytes.IndexByte(b[open:], '>')
-	if close < 0 {
-		close = len(b) - open // unclosed; scan to EOF
-	} else {
-		close += open
-	}
-	tagRegion := b[open : close+1]
+	// Find the end of this opening tag (quote- and expression-aware).
+	end := openingTagEnd(b, open)
+	tagRegion := b[open:regionEnd(end, len(b))]
 
 	aOff := bytes.Index(tagRegion, []byte(strings.ToLower(attr)))
 	if aOff < 0 {
@@ -130,13 +234,8 @@ func (s *source) rawAttrBrokenQuote(n *html.Node, attr string) (broken, isSingle
 	attrLower := strings.ToLower(attr)
 	b := s.bytes
 
-	close := bytes.IndexByte(b[open:], '>')
-	if close < 0 {
-		close = len(b) - open
-	} else {
-		close += open
-	}
-	tagRegion := b[open : close+1]
+	end := openingTagEnd(b, open)
+	tagRegion := b[open:regionEnd(end, len(b))]
 
 	aOff := bytes.Index(tagRegion, []byte(attrLower))
 	if aOff < 0 {
@@ -179,6 +278,26 @@ func (s *source) offsetToLineCol(off int) (line, col int) {
 	}
 	col = off - s.lines[line-1] + 1
 	return line, col
+}
+
+// attrValueIsExpr reports whether the named attribute's value starts with an
+// unquoted '{' in the source — a templ Go expression, not markup.
+func (s *source) attrValueIsExpr(n *html.Node, attr string) bool {
+	open, ok := s.anchorFor(n)
+	if !ok {
+		return false
+	}
+	end := openingTagEnd(s.bytes, open)
+	region := s.bytes[open:regionEnd(end, len(s.bytes))]
+	aOff := bytes.Index(region, []byte(strings.ToLower(attr)))
+	if aOff < 0 {
+		return false
+	}
+	i := aOff + len(attr)
+	for i < len(region) && (region[i] == ' ' || region[i] == '\t' || region[i] == '=') {
+		i++
+	}
+	return i < len(region) && region[i] == '{'
 }
 
 // getAttrPosition returns the 1-based line and column of attribute a on node n,

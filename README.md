@@ -188,6 +188,7 @@ project, say so once in the config rather than trusting every future edit.
 - **`INVALID_MODIFIER`** — Unknown modifiers on Datastar attributes.
 - **`PRO_ATTR`** — Datastar Pro-only attributes. Warning by default, error in strict mode.
 - **`FOREIGN_ATTR`** — Alpine.js/Vue.js leftovers (`x-data`, `v-if`, `@click`).
+- **`INLINE_JS_HANDLER`** — Native inline handlers (`onclick`, `onsubmit`, ...). Datastar never sees them: no signal graph, no modifiers (`__prevent`, `__debounce`), no `clientID` de-duplication — and next to a `data-on:*` handler they fire twice. Use `data-on:<event>`. Severity: error. A templ Go expression (`onclick={ handler }`) is not JavaScript and is not flagged; JSX props (`onClick`) live in `.tsx`/`.jsx` files and are skipped.
 - **`PATCH_ELEMENTS_NO_ID`** — Element with `data-on:load` (SSE) or `data-on-signal-patch` but no `id`. The JS client needs an `#id` anchor to morph the fragment.
 - **`ON_LOAD_NO_EVENT`** — `data-on:load` on an element that never fires the native `load` event (`<div>`, `<span>`, etc.). The native `load` event only fires on `<body>`, `<img>`, `<script>`, `<link>`, `<video>`, and other elements with external resource loading. On all other elements the callback silently never executes. Use `data-init` instead, or add the `__window` modifier. Severity: error.
 - **`ON_INIT_NO_EVENT`** — `data-on:init` used anywhere — there is no `init` event in the browser DOM spec. Use `data-init` (without colon) instead, which runs immediately when the element is processed by Datastar. Severity: error.
@@ -379,6 +380,27 @@ of these methods take no options at all, so they cannot be missing a selector:
 `PatchElementf`, `RemoveElementf`, `RemoveElementByID`.
 
 ## Architecture
+
+### Positions are exact, not approximate
+
+The HTML parser discards byte offsets, so a finding's line/column are recovered
+from the raw source. Two rules make that reliable:
+
+- **Every element is anchored eagerly**, in one pre-order pass, and a candidate
+  tag is accepted only when its attribute set matches the parsed node. A lazy
+  lookup skipped elements that produced no finding, so the next `<tag` found
+  could belong to a sibling — a `data-bind` on line 328 was reported at line
+  280, pointing at an unrelated hidden input.
+- **The end of an opening tag skips quoted values and `{ ... }` expressions**, so
+  a `>` inside `data-on:click="$x > 1"` or `class={ limit > 3 }` is data, not a
+tag boundary.
+
+`.templ` values can be Go expressions, which the HTML parser cannot parse (it
+splits `<div class={ templ.KV("x", a > 3) } data-x="y">` into bogus attributes
+and swallows the rest of the tag). The file is parsed from a sanitized copy whose
+length is identical byte for byte: each unquoted `{ ... }` becomes a quoted
+placeholder, so attributes after the expression stay visible while positions keep
+pointing at the original text.
 
 datastar-lint uses a plugin-style `Analyzer` interface:
 

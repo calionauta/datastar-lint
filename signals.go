@@ -23,9 +23,9 @@ func checkJSONSignals(val string, n *html.Node, a html.Attribute, path, tag stri
 	line, col := getAttrPosition(n, a)
 
 	// Skip if value is a Go/templ expression (not parseable by HTML parser).
-	// Templ .templ files embed Go code in { ... } — the HTML parser mangles
-	// these into garbage, making JSON validation meaningless.
-	if isTemplGoExpr(trimmed) {
+	// Templ .templ files embed Go code in { ... } — the parser sees a sanitized
+	// placeholder, so the raw source is what tells them apart.
+	if isTemplGoExpr(trimmed) || rawAttrIsGoExpr(n, a) {
 		return
 	}
 

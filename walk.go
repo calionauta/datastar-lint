@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -31,7 +32,14 @@ func lintFile(path string, cfg config) []lintResult {
 	curSrc = newSource(srcBytes)
 	defer func() { curSrc = nil }()
 
-	doc, err := html.Parse(f)
+	// .templ values can be Go expressions; parse a length-preserving sanitized
+	// copy so attributes after the expression are visible (positions still come
+	// from the original bytes).
+	srcLookup := srcBytes
+	if strings.HasSuffix(path, ".templ") {
+		srcLookup = sanitizeTemplAttrs(srcBytes)
+	}
+	doc, err := html.Parse(bytes.NewReader(srcLookup))
 	if err != nil {
 		return []lintResult{{
 			Severity: sevError,
@@ -42,6 +50,7 @@ func lintFile(path string, cfg config) []lintResult {
 	}
 
 	var results []lintResult
+	curSrc.anchorAll(doc)
 	walkNode(doc, path, 0, &results, cfg)
 	return results
 }
@@ -95,6 +104,32 @@ func resultsElem(n *html.Node, path string, results *[]lintResult, cfg config) {
 				Code:       "FOREIGN_ATTR",
 				Message:    fmt.Sprintf("'%s' is Alpine.js/Vue.js syntax — use Datastar equivalents", a.Key),
 				Suggestion: "Replace with Datastar attributes: data-bind, data-on:click, data-signals, etc.",
+			})
+		}
+	}
+
+	// 1b. Native inline handlers (onclick=, onsubmit=...) are a parallel event
+	// system Datastar never sees: no signal, no modifiers, no clientID
+	// de-duplication. In a Datastar app the intent is data-on:<event>. JSX props
+	// (onClick) live in JS files and are skipped; a templ Go expression
+	// (onclick={ handler }) is a Go value, not JavaScript.
+	if !isJSLike(path) {
+		for _, a := range n.Attr {
+			event, ok := inlineHandlerEvent(a.Key)
+			if !ok || rawAttrIsGoExpr(n, a) {
+				continue
+			}
+			line, col := getAttrPosition(n, a)
+			*results = append(*results, lintResult{
+				Severity:   sevError,
+				File:       path,
+				Line:       line,
+				Col:        col,
+				Element:    tag,
+				Attribute:  a.Key,
+				Code:       "INLINE_JS_HANDLER",
+				Message:    fmt.Sprintf("'%s' is a native inline handler — Datastar does not see it", a.Key),
+				Suggestion: fmt.Sprintf("Use data-on:%s so the handler runs inside the signal graph (modifiers like __prevent apply)", event),
 			})
 		}
 	}
